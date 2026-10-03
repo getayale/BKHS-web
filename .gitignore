@@ -1,0 +1,30 @@
+# Composer
+/vendor/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Uploads
+/public/uploads/
+/uploads/
+
+# User-generated files
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PHP/XAMPP temporary files
+*.tmp
+*.cache
+
+# Local database backups
+*.sql
+*.sql.gz

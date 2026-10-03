@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Login API</title>
+</head>
+
+<body>
+
+    <h2>Test BKHS Login API</h2>
+
+    <form id="loginForm">
+
+        <div>
+            <label>Identifier</label>
+            <input
+                type="text"
+                id="identifier"
+                required
+            >
+        </div>
+
+        <br>
+
+        <div>
+            <label>Password</label>
+            <input
+                type="password"
+                id="password"
+                required
+            >
+        </div>
+
+        <br>
+
+        <button type="submit">Login</button>
+
+    </form>
+
+    <h3>Response</h3>
+
+    <pre id="result"></pre>
+
+    <script>
+
+        document
+            .getElementById('loginForm')
+            .addEventListener('submit', async function (event) {
+
+                event.preventDefault();
+
+                const identifier =
+                    document.getElementById('identifier').value;
+
+                const password =
+                    document.getElementById('password').value;
+
+                const response = await fetch(
+                    'login.php',
+                    {
+                        method: 'POST',
+
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+
+                        body: JSON.stringify({
+                            identifier: identifier,
+                            password: password
+                        })
+                    }
+                );
+
+                const data = await response.json();
+
+                document.getElementById('result').textContent =
+                    JSON.stringify(data, null, 4);
+
+            });
+
+    </script>
+
+</body>
+</html>
