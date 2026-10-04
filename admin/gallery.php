@@ -40,6 +40,7 @@ if (
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/EthiopianCalendar.php';
+require_once __DIR__ . '/../includes/AuditLogger.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -471,7 +472,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
         }
 
+        $galleryId = $stmt->insert_id;
+
         $stmt->close();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Audit Log - Photo Created
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+            AuditLogger::log(
+                $conn,
+                'GALLERY_PHOTO_CREATED',
+                'Added a new gallery photo',
+                'gallery',
+                (string) $galleryId,
+                null,
+                [
+                    'gallery_id' => $galleryId,
+                    'title' => $title,
+                    'description' => $description,
+                    'category' => $category,
+                    'image_path' => $imagePath
+                ]
+            );
+        } catch (Throwable $auditException) {
+            error_log(
+                'AuditLogger GALLERY_PHOTO_CREATED failed for gallery ID '
+                . $galleryId
+                . ': '
+                . $auditException->getMessage()
+            );
+        }
 
         redirectGallery(
             'success',
@@ -523,7 +557,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
          * Get old photo.
          */
         $stmt = $conn->prepare(
-            "SELECT image_path FROM gallery WHERE id = ? LIMIT 1"
+            "SELECT
+                title,
+                description,
+                category,
+                image_path
+             FROM gallery
+             WHERE id = ?
+             LIMIT 1"
         );
 
         if (!$stmt) {
@@ -548,7 +589,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
         }
 
-        $oldImagePath = (string) $existingPhoto['image_path'];
+        $oldTitle = (string) ($existingPhoto['title'] ?? '');
+        $oldDescription = (string) ($existingPhoto['description'] ?? '');
+        $oldCategory = (string) ($existingPhoto['category'] ?? '');
+        $oldImagePath = (string) ($existingPhoto['image_path'] ?? '');
 
         $newImagePath = $oldImagePath;
         $uploadedNewImage = false;
@@ -642,6 +686,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             deleteGalleryFile($oldImagePath);
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Audit Changes
+        |--------------------------------------------------------------------------
+        */
+
+        $changes = [];
+
+        if ($oldTitle !== $title) {
+            $changes['title'] = [
+                'old' => $oldTitle,
+                'new' => $title
+            ];
+        }
+
+        if ($oldDescription !== $description) {
+            $changes['description'] = [
+                'old' => $oldDescription,
+                'new' => $description
+            ];
+        }
+
+        if ($oldCategory !== $category) {
+            $changes['category'] = [
+                'old' => $oldCategory,
+                'new' => $category
+            ];
+        }
+
+        if ($oldImagePath !== $newImagePath) {
+            $changes['image_path'] = [
+                'old' => $oldImagePath,
+                'new' => $newImagePath
+            ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Audit Log - Photo Updated
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+            AuditLogger::log(
+                $conn,
+                'GALLERY_PHOTO_UPDATED',
+                'Updated gallery photo information',
+                'gallery',
+                (string) $id,
+                [
+                    'gallery_id' => $id,
+                    'title' => $oldTitle,
+                    'description' => $oldDescription,
+                    'category' => $oldCategory,
+                    'image_path' => $oldImagePath
+                ],
+                [
+                    'gallery_id' => $id,
+                    'title' => $title,
+                    'description' => $description,
+                    'category' => $category,
+                    'image_path' => $newImagePath,
+                    'changes' => $changes
+                ]
+            );
+        } catch (Throwable $auditException) {
+            error_log(
+                'AuditLogger GALLERY_PHOTO_UPDATED failed for gallery ID '
+                . $id
+                . ': '
+                . $auditException->getMessage()
+            );
+        }
+
         redirectGallery(
             'success',
             'Photo updated successfully.'
@@ -668,7 +786,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
          * Get image path first.
          */
         $stmt = $conn->prepare(
-            "SELECT image_path FROM gallery WHERE id = ? LIMIT 1"
+            "SELECT
+                title,
+                description,
+                category,
+                image_path
+             FROM gallery
+             WHERE id = ?
+             LIMIT 1"
         );
 
         if (!$stmt) {
@@ -728,6 +853,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
          */
         if ($imagePath !== '') {
             deleteGalleryFile($imagePath);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Audit Log - Photo Deleted
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+            AuditLogger::log(
+                $conn,
+                'GALLERY_PHOTO_DELETED',
+                'Deleted a gallery photo',
+                'gallery',
+                (string) $id,
+                [
+                    'gallery_id' => $id,
+                    'title' => (string) ($photo['title'] ?? ''),
+                    'description' => (string) ($photo['description'] ?? ''),
+                    'category' => (string) ($photo['category'] ?? ''),
+                    'image_path' => $imagePath
+                ],
+                null
+            );
+        } catch (Throwable $auditException) {
+            error_log(
+                'AuditLogger GALLERY_PHOTO_DELETED failed for gallery ID '
+                . $id
+                . ': '
+                . $auditException->getMessage()
+            );
         }
 
         redirectGallery(
@@ -1021,7 +1177,8 @@ function formatEthiopianDate($dateTime): string
     >
 
     <title>Gallery Management | BKHS</title>
-       <link
+
+    <link
         rel="icon"
         type="image/webp"
         href="../public/image/logo.webp"
@@ -1671,9 +1828,6 @@ function formatEthiopianDate($dateTime): string
             <i class="bi bi-images"></i>
             <span>Gallery</span>
         </a>
-
-      
-
 
         <div class="nav-section-title">
             Account

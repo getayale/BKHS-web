@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 session_start();
 
 if (
@@ -13,6 +15,7 @@ if (
 }
 
 require_once '../config/database.php';
+require_once '../includes/AuditLogger.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -29,8 +32,10 @@ function e($value): string
     );
 }
 
-function redirectWithMessage(string $type, string $message): never
-{
+function redirectWithMessage(
+    string $type,
+    string $message
+): never {
     $_SESSION['flash_type'] = $type;
     $_SESSION['flash_message'] = $message;
 
@@ -101,8 +106,19 @@ if (
         );
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Get Assignment Before Deleting
+    |--------------------------------------------------------------------------
+    */
+
     $stmt = $conn->prepare("
-        SELECT book_pdf
+        SELECT
+            id,
+            grade,
+            subject_name,
+            book_pdf,
+            is_active
         FROM grade_subjects
         WHERE id = ?
         LIMIT 1
@@ -115,7 +131,11 @@ if (
         );
     }
 
-    $stmt->bind_param('i', $deleteId);
+    $stmt->bind_param(
+        'i',
+        $deleteId
+    );
+
     $stmt->execute();
 
     $result = $stmt->get_result();
@@ -132,6 +152,12 @@ if (
 
     $bookPdf = $assignment['book_pdf'] ?? null;
 
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Assignment
+    |--------------------------------------------------------------------------
+    */
+
     $stmt = $conn->prepare("
         DELETE FROM grade_subjects
         WHERE id = ?
@@ -144,34 +170,112 @@ if (
         );
     }
 
-    $stmt->bind_param('i', $deleteId);
+    $stmt->bind_param(
+        'i',
+        $deleteId
+    );
 
-    if (!$stmt->execute()) {
+    try {
+
+        if (!$stmt->execute()) {
+
+            $stmt->close();
+
+            redirectWithMessage(
+                'danger',
+                'Failed to delete the subject assignment.'
+            );
+        }
+
+        $deletedRows = $stmt->affected_rows;
+
         $stmt->close();
+
+        if ($deletedRows <= 0) {
+            redirectWithMessage(
+                'danger',
+                'The subject assignment could not be deleted.'
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Audit Log
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+
+            AuditLogger::log(
+                $conn,
+                'SUBJECT_ASSIGNMENT_DELETED',
+                'Deleted a subject assignment',
+                'grade_subject',
+                (string) $deleteId,
+                [
+                    'id' => (int) $assignment['id'],
+                    'grade' => (int) $assignment['grade'],
+                    'subject_name' => (string) $assignment['subject_name'],
+                    'book_pdf' => !empty($assignment['book_pdf'])
+                        ? (string) $assignment['book_pdf']
+                        : null,
+                    'is_active' => (int) $assignment['is_active']
+                ],
+                null
+            );
+
+        } catch (Throwable $auditException) {
+
+            error_log(
+                'AuditLogger SUBJECT_ASSIGNMENT_DELETED failed for ID ' .
+                $deleteId .
+                ': ' .
+                $auditException->getMessage()
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Delete Physical PDF
+        |--------------------------------------------------------------------------
+        */
+
+        if (!empty($bookPdf)) {
+
+            $filePath =
+                __DIR__ .
+                '/../' .
+                ltrim(
+                    (string) $bookPdf,
+                    '/'
+                );
+
+            if (is_file($filePath)) {
+                @unlink($filePath);
+            }
+        }
+
+        redirectWithMessage(
+            'success',
+            'Subject assignment deleted successfully.'
+        );
+
+    } catch (Throwable $e) {
+
+        if ($stmt instanceof mysqli_stmt) {
+            $stmt->close();
+        }
+
+        error_log(
+            'BKHS Subject Assignment Delete Error: ' .
+            $e->getMessage()
+        );
 
         redirectWithMessage(
             'danger',
-            'Failed to delete the subject assignment.'
+            'Unable to delete the subject assignment. Please try again.'
         );
     }
-
-    $stmt->close();
-
-    /*
-     * Delete physical PDF after successful database deletion.
-     */
-    if (!empty($bookPdf)) {
-        $filePath = __DIR__ . '/../' . ltrim($bookPdf, '/');
-
-        if (is_file($filePath)) {
-            @unlink($filePath);
-        }
-    }
-
-    redirectWithMessage(
-        'success',
-        'Subject assignment deleted successfully.'
-    );
 }
 
 /*
@@ -184,60 +288,103 @@ if (
     $_SERVER['REQUEST_METHOD'] === 'POST' &&
     isset($_POST['save_assignment'])
 ) {
+
     $assignmentId = (int) ($_POST['assignment_id'] ?? 0);
 
     $grade = (int) ($_POST['grade'] ?? 0);
-    $subjectName = trim((string) ($_POST['subject_name'] ?? ''));
 
-    $formGrade = $grade > 0 ? (string) $grade : '';
-    $formSubjectName = $subjectName;
+    $subjectName = trim(
+        (string) ($_POST['subject_name'] ?? '')
+    );
 
-    $isUpdate = $assignmentId > 0;
+    $formGrade =
+        $grade > 0
+            ? (string) $grade
+            : '';
+
+    $formSubjectName =
+        $subjectName;
+
+    $isUpdate =
+        $assignmentId > 0;
 
     /*
-     * Validation
-     */
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
     if ($grade < 1 || $grade > 12) {
-        $errorMessage = 'Please select a valid grade.';
+
+        $errorMessage =
+            'Please select a valid grade.';
+
     } elseif ($subjectName === '') {
-        $errorMessage = 'Please enter the subject name.';
+
+        $errorMessage =
+            'Please enter the subject name.';
+
     } elseif (mb_strlen($subjectName) > 150) {
-        $errorMessage = 'Subject name cannot exceed 150 characters.';
+
+        $errorMessage =
+            'Subject name cannot exceed 150 characters.';
     }
 
     /*
-     * Get existing assignment when updating.
-     */
+    |--------------------------------------------------------------------------
+    | Existing Assignment
+    |--------------------------------------------------------------------------
+    */
+
+    $existingAssignment = null;
     $existingBookPdf = null;
 
-    if ($errorMessage === '' && $isUpdate) {
+    if (
+        $errorMessage === '' &&
+        $isUpdate
+    ) {
+
         $stmt = $conn->prepare("
             SELECT
                 id,
                 grade,
                 subject_name,
-                book_pdf
+                book_pdf,
+                is_active
             FROM grade_subjects
             WHERE id = ?
             LIMIT 1
         ");
 
         if (!$stmt) {
+
             $errorMessage =
                 'Unable to load the subject assignment.';
+
         } else {
-            $stmt->bind_param('i', $assignmentId);
+
+            $stmt->bind_param(
+                'i',
+                $assignmentId
+            );
+
             $stmt->execute();
 
-            $result = $stmt->get_result();
-            $existingAssignment = $result->fetch_assoc();
+            $result =
+                $stmt->get_result();
+
+            $existingAssignment =
+                $result->fetch_assoc();
 
             $stmt->close();
 
             if (!$existingAssignment) {
+
                 $errorMessage =
                     'Subject assignment not found.';
+
             } else {
+
                 $existingBookPdf =
                     $existingAssignment['book_pdf'];
             }
@@ -245,10 +392,15 @@ if (
     }
 
     /*
-     * Check duplicate grade + subject.
-     */
+    |--------------------------------------------------------------------------
+    | Check Duplicate Grade + Subject
+    |--------------------------------------------------------------------------
+    */
+
     if ($errorMessage === '') {
+
         if ($isUpdate) {
+
             $stmt = $conn->prepare("
                 SELECT id
                 FROM grade_subjects
@@ -259,9 +411,12 @@ if (
             ");
 
             if (!$stmt) {
+
                 $errorMessage =
                     'Unable to validate the subject assignment.';
+
             } else {
+
                 $stmt->bind_param(
                     'isi',
                     $grade,
@@ -271,16 +426,20 @@ if (
 
                 $stmt->execute();
 
-                $result = $stmt->get_result();
+                $result =
+                    $stmt->get_result();
 
                 if ($result->num_rows > 0) {
+
                     $errorMessage =
                         'This subject is already assigned to the selected grade.';
                 }
 
                 $stmt->close();
             }
+
         } else {
+
             $stmt = $conn->prepare("
                 SELECT id
                 FROM grade_subjects
@@ -290,9 +449,12 @@ if (
             ");
 
             if (!$stmt) {
+
                 $errorMessage =
                     'Unable to validate the subject assignment.';
+
             } else {
+
                 $stmt->bind_param(
                     'is',
                     $grade,
@@ -301,9 +463,11 @@ if (
 
                 $stmt->execute();
 
-                $result = $stmt->get_result();
+                $result =
+                    $stmt->get_result();
 
                 if ($result->num_rows > 0) {
+
                     $errorMessage =
                         'This subject is already assigned to the selected grade.';
                 }
@@ -314,58 +478,93 @@ if (
     }
 
     /*
-     * Handle PDF upload.
-     */
-    $newBookPdf = $existingBookPdf;
+    |--------------------------------------------------------------------------
+    | Handle PDF Upload
+    |--------------------------------------------------------------------------
+    */
 
-    $uploadedNewFile = false;
-    $newUploadedFilePath = '';
+    $newBookPdf =
+        $existingBookPdf;
+
+    $uploadedNewFile =
+        false;
+
+    $newUploadedFilePath =
+        '';
 
     if (
         $errorMessage === '' &&
         isset($_FILES['book_pdf']) &&
         $_FILES['book_pdf']['error'] !== UPLOAD_ERR_NO_FILE
     ) {
-        $file = $_FILES['book_pdf'];
 
-        if ($file['error'] !== UPLOAD_ERR_OK) {
+        $file =
+            $_FILES['book_pdf'];
+
+        if (
+            $file['error'] !== UPLOAD_ERR_OK
+        ) {
+
             $errorMessage =
                 'There was a problem uploading the PDF.';
-        } elseif ($file['size'] > 20 * 1024 * 1024) {
+
+        } elseif (
+            ($file['size'] ?? 0) >
+            20 * 1024 * 1024
+        ) {
+
             $errorMessage =
                 'The PDF file must not exceed 20 MB.';
-        } else {
-            $originalName = $file['name'];
 
-            $extension = strtolower(
-                pathinfo(
-                    $originalName,
-                    PATHINFO_EXTENSION
-                )
-            );
+        } else {
+
+            $originalName =
+                (string) $file['name'];
+
+            $extension =
+                strtolower(
+                    pathinfo(
+                        $originalName,
+                        PATHINFO_EXTENSION
+                    )
+                );
 
             if ($extension !== 'pdf') {
+
                 $errorMessage =
                     'Only PDF files are allowed.';
-            } else {
-                $finfo = finfo_open(FILEINFO_MIME_TYPE);
 
-                $mimeType = $finfo
-                    ? finfo_file(
-                        $finfo,
-                        $file['tmp_name']
-                    )
-                    : '';
+            } else {
+
+                $finfo =
+                    finfo_open(
+                        FILEINFO_MIME_TYPE
+                    );
+
+                $mimeType =
+                    $finfo
+                        ? finfo_file(
+                            $finfo,
+                            $file['tmp_name']
+                        )
+                        : '';
 
                 if ($finfo) {
                     finfo_close($finfo);
                 }
 
-                if ($mimeType !== 'application/pdf') {
+                if (
+                    $mimeType !==
+                    'application/pdf'
+                ) {
+
                     $errorMessage =
                         'The uploaded file is not a valid PDF.';
+
                 } else {
+
                     if (!is_dir($uploadDirectory)) {
+
                         @mkdir(
                             $uploadDirectory,
                             0777,
@@ -374,10 +573,14 @@ if (
                     }
 
                     if (!is_dir($uploadDirectory)) {
+
                         $errorMessage =
                             'Unable to create the book upload directory.';
+
                     } else {
+
                         try {
+
                             $uniqueName =
                                 'book_' .
                                 date('YmdHis') .
@@ -386,12 +589,15 @@ if (
                                     random_bytes(8)
                                 ) .
                                 '.pdf';
+
                         } catch (Throwable $e) {
+
                             $errorMessage =
                                 'Unable to generate a secure file name.';
                         }
 
                         if ($errorMessage === '') {
+
                             $destination =
                                 $uploadDirectory .
                                 $uniqueName;
@@ -402,9 +608,12 @@ if (
                                     $destination
                                 )
                             ) {
+
                                 $errorMessage =
                                     'Failed to save the uploaded PDF.';
+
                             } else {
+
                                 $newBookPdf =
                                     $databaseUploadPath .
                                     $uniqueName;
@@ -412,7 +621,8 @@ if (
                                 $newUploadedFilePath =
                                     $destination;
 
-                                $uploadedNewFile = true;
+                                $uploadedNewFile =
+                                    true;
                             }
                         }
                     }
@@ -422,10 +632,15 @@ if (
     }
 
     /*
-     * Save to database.
-     */
+    |--------------------------------------------------------------------------
+    | Save To Database
+    |--------------------------------------------------------------------------
+    */
+
     if ($errorMessage === '') {
+
         if ($isUpdate) {
+
             $stmt = $conn->prepare("
                 UPDATE grade_subjects
                 SET
@@ -436,9 +651,12 @@ if (
             ");
 
             if (!$stmt) {
+
                 $errorMessage =
                     'Unable to prepare the update request.';
+
             } else {
+
                 $stmt->bind_param(
                     'issi',
                     $grade,
@@ -447,50 +665,192 @@ if (
                     $assignmentId
                 );
 
-                if (!$stmt->execute()) {
-                    if ($stmt->errno === 1062) {
-                        $errorMessage =
-                            'This subject is already assigned to the selected grade.';
+                try {
+
+                    if (!$stmt->execute()) {
+
+                        if ($stmt->errno === 1062) {
+
+                            $errorMessage =
+                                'This subject is already assigned to the selected grade.';
+
+                        } else {
+
+                            $errorMessage =
+                                'Failed to update the subject assignment.';
+                        }
+
+                        $stmt->close();
+
                     } else {
-                        $errorMessage =
-                            'Failed to update the subject assignment.';
-                    }
 
-                    $stmt->close();
-                } else {
-                    $stmt->close();
+                        $stmt->close();
 
-                    /*
-                     * Delete old PDF only after successful update.
-                     */
-                    if (
-                        $uploadedNewFile &&
-                        !empty($existingBookPdf)
-                    ) {
-                        $oldFilePath =
-                            __DIR__ .
-                            '/../' .
-                            ltrim(
-                                $existingBookPdf,
-                                '/'
-                            );
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Audit Changes
+                        |--------------------------------------------------------------------------
+                        */
+
+                        $oldValues = [
+                            'id' => (int) $existingAssignment['id'],
+                            'grade' => (int) $existingAssignment['grade'],
+                            'subject_name' => (string) $existingAssignment['subject_name'],
+                            'book_pdf' => !empty($existingAssignment['book_pdf'])
+                                ? (string) $existingAssignment['book_pdf']
+                                : null,
+                            'is_active' => (int) $existingAssignment['is_active']
+                        ];
+
+                        $newValues = [
+                            'id' => $assignmentId,
+                            'grade' => $grade,
+                            'subject_name' => $subjectName,
+                            'book_pdf' => !empty($newBookPdf)
+                                ? (string) $newBookPdf
+                                : null,
+                            'is_active' => (int) $existingAssignment['is_active']
+                        ];
+
+                        $changes = [];
 
                         if (
-                            is_file($oldFilePath) &&
-                            $oldFilePath !==
-                            $newUploadedFilePath
+                            (int) $existingAssignment['grade'] !==
+                            $grade
                         ) {
-                            @unlink($oldFilePath);
+
+                            $changes['grade'] = [
+                                'old' =>
+                                    (int) $existingAssignment['grade'],
+                                'new' =>
+                                    $grade
+                            ];
                         }
+
+                        if (
+                            (string) $existingAssignment['subject_name'] !==
+                            $subjectName
+                        ) {
+
+                            $changes['subject_name'] = [
+                                'old' =>
+                                    (string) $existingAssignment['subject_name'],
+                                'new' =>
+                                    $subjectName
+                            ];
+                        }
+
+                        $oldBook =
+                            !empty(
+                                $existingAssignment['book_pdf']
+                            )
+                                ? (string) $existingAssignment['book_pdf']
+                                : null;
+
+                        $newBook =
+                            !empty($newBookPdf)
+                                ? (string) $newBookPdf
+                                : null;
+
+                        if ($oldBook !== $newBook) {
+
+                            $changes['book_pdf'] = [
+                                'old' => $oldBook,
+                                'new' => $newBook
+                            ];
+                        }
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Audit Log
+                        |--------------------------------------------------------------------------
+                        */
+
+                        try {
+
+                            AuditLogger::log(
+                                $conn,
+                                'SUBJECT_ASSIGNMENT_UPDATED',
+                                'Updated a subject assignment',
+                                'grade_subject',
+                                (string) $assignmentId,
+                                $oldValues,
+                                [
+                                    'id' => $assignmentId,
+                                    'grade' => $grade,
+                                    'subject_name' => $subjectName,
+                                    'book_pdf' => $newBook,
+                                    'is_active' =>
+                                        (int) $existingAssignment['is_active'],
+                                    'changes' => $changes
+                                ]
+                            );
+
+                        } catch (Throwable $auditException) {
+
+                            error_log(
+                                'AuditLogger SUBJECT_ASSIGNMENT_UPDATED failed for ID ' .
+                                $assignmentId .
+                                ': ' .
+                                $auditException->getMessage()
+                            );
+                        }
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Delete Old PDF
+                        |--------------------------------------------------------------------------
+                        */
+
+                        if (
+                            $uploadedNewFile &&
+                            !empty($existingBookPdf)
+                        ) {
+
+                            $oldFilePath =
+                                __DIR__ .
+                                '/../' .
+                                ltrim(
+                                    (string) $existingBookPdf,
+                                    '/'
+                                );
+
+                            if (
+                                is_file($oldFilePath) &&
+                                $oldFilePath !==
+                                $newUploadedFilePath
+                            ) {
+
+                                @unlink(
+                                    $oldFilePath
+                                );
+                            }
+                        }
+
+                        redirectWithMessage(
+                            'success',
+                            'Subject assignment updated successfully.'
+                        );
                     }
 
-                    redirectWithMessage(
-                        'success',
-                        'Subject assignment updated successfully.'
+                } catch (Throwable $e) {
+
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->close();
+                    }
+
+                    $errorMessage =
+                        'Failed to update the subject assignment.';
+
+                    error_log(
+                        'BKHS Subject Assignment Update Error: ' .
+                        $e->getMessage()
                     );
                 }
             }
+
         } else {
+
             $stmt = $conn->prepare("
                 INSERT INTO grade_subjects
                 (
@@ -503,9 +863,12 @@ if (
             ");
 
             if (!$stmt) {
+
                 $errorMessage =
                     'Unable to prepare the save request.';
+
             } else {
+
                 $stmt->bind_param(
                     'iss',
                     $grade,
@@ -513,22 +876,84 @@ if (
                     $newBookPdf
                 );
 
-                if (!$stmt->execute()) {
-                    if ($stmt->errno === 1062) {
-                        $errorMessage =
-                            'This subject is already assigned to the selected grade.';
+                try {
+
+                    if (!$stmt->execute()) {
+
+                        if ($stmt->errno === 1062) {
+
+                            $errorMessage =
+                                'This subject is already assigned to the selected grade.';
+
+                        } else {
+
+                            $errorMessage =
+                                'Failed to create the subject assignment.';
+                        }
+
+                        $stmt->close();
+
                     } else {
-                        $errorMessage =
-                            'Failed to create the subject assignment.';
+
+                        $newAssignmentId =
+                            (int) $stmt->insert_id;
+
+                        $stmt->close();
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Audit Log
+                        |--------------------------------------------------------------------------
+                        */
+
+                        try {
+
+                            AuditLogger::log(
+                                $conn,
+                                'SUBJECT_ASSIGNMENT_CREATED',
+                                'Created a new subject assignment',
+                                'grade_subject',
+                                (string) $newAssignmentId,
+                                null,
+                                [
+                                    'id' => $newAssignmentId,
+                                    'grade' => $grade,
+                                    'subject_name' => $subjectName,
+                                    'book_pdf' => !empty($newBookPdf)
+                                        ? (string) $newBookPdf
+                                        : null,
+                                    'is_active' => 1
+                                ]
+                            );
+
+                        } catch (Throwable $auditException) {
+
+                            error_log(
+                                'AuditLogger SUBJECT_ASSIGNMENT_CREATED failed for ID ' .
+                                $newAssignmentId .
+                                ': ' .
+                                $auditException->getMessage()
+                            );
+                        }
+
+                        redirectWithMessage(
+                            'success',
+                            'Subject assigned successfully.'
+                        );
                     }
 
-                    $stmt->close();
-                } else {
-                    $stmt->close();
+                } catch (Throwable $e) {
 
-                    redirectWithMessage(
-                        'success',
-                        'Subject assigned successfully.'
+                    if ($stmt instanceof mysqli_stmt) {
+                        $stmt->close();
+                    }
+
+                    $errorMessage =
+                        'Failed to create the subject assignment.';
+
+                    error_log(
+                        'BKHS Subject Assignment Create Error: ' .
+                        $e->getMessage()
                     );
                 }
             }
@@ -536,26 +961,40 @@ if (
     }
 
     /*
-     * If database operation failed after a new upload,
-     * remove the newly uploaded file.
-     */
+    |--------------------------------------------------------------------------
+    | Remove New Upload If Database Operation Failed
+    |--------------------------------------------------------------------------
+    */
+
     if (
         $errorMessage !== '' &&
         $uploadedNewFile &&
         $newUploadedFilePath !== '' &&
         is_file($newUploadedFilePath)
     ) {
-        @unlink($newUploadedFilePath);
+
+        @unlink(
+            $newUploadedFilePath
+        );
     }
 
     if ($isUpdate) {
+
         $editMode = true;
-        $editId = $assignmentId;
-        $editGrade = (string) $grade;
-        $editSubjectName = $subjectName;
-        $editBookPdf = (string) (
-            $existingBookPdf ?? ''
-        );
+
+        $editId =
+            $assignmentId;
+
+        $editGrade =
+            (string) $grade;
+
+        $editSubjectName =
+            $subjectName;
+
+        $editBookPdf =
+            (string) (
+                $existingBookPdf ?? ''
+            );
     }
 }
 
@@ -569,9 +1008,12 @@ if (
     $_SERVER['REQUEST_METHOD'] === 'GET' &&
     isset($_GET['edit'])
 ) {
-    $requestedEditId = (int) $_GET['edit'];
+
+    $requestedEditId =
+        (int) $_GET['edit'];
 
     if ($requestedEditId > 0) {
+
         $stmt = $conn->prepare("
             SELECT
                 id,
@@ -584,6 +1026,7 @@ if (
         ");
 
         if ($stmt) {
+
             $stmt->bind_param(
                 'i',
                 $requestedEditId
@@ -591,15 +1034,20 @@ if (
 
             $stmt->execute();
 
-            $result = $stmt->get_result();
-            $assignment = $result->fetch_assoc();
+            $result =
+                $stmt->get_result();
+
+            $assignment =
+                $result->fetch_assoc();
 
             $stmt->close();
 
             if ($assignment) {
+
                 $editMode = true;
 
-                $editId = (int) $assignment['id'];
+                $editId =
+                    (int) $assignment['id'];
 
                 $editGrade =
                     (string) $assignment['grade'];
@@ -612,8 +1060,11 @@ if (
                         $assignment['book_pdf'] ?? ''
                     );
 
-                $formGrade = $editGrade;
-                $formSubjectName = $editSubjectName;
+                $formGrade =
+                    $editGrade;
+
+                $formSubjectName =
+                    $editSubjectName;
             }
         }
     }
@@ -625,15 +1076,20 @@ if (
 |--------------------------------------------------------------------------
 */
 
-$filterGrade = isset($_GET['grade'])
-    ? (int) $_GET['grade']
-    : 0;
+$filterGrade =
+    isset($_GET['grade'])
+        ? (int) $_GET['grade']
+        : 0;
 
-$searchSubject = trim(
-    (string) ($_GET['subject'] ?? '')
-);
+$searchSubject =
+    trim(
+        (string) ($_GET['subject'] ?? '')
+    );
 
-if ($filterGrade < 1 || $filterGrade > 12) {
+if (
+    $filterGrade < 1 ||
+    $filterGrade > 12
+) {
     $filterGrade = 0;
 }
 
@@ -645,9 +1101,10 @@ if ($filterGrade < 1 || $filterGrade > 12) {
 
 $itemsPerPage = 20;
 
-$currentPage = isset($_GET['page'])
-    ? (int) $_GET['page']
-    : 1;
+$currentPage =
+    isset($_GET['page'])
+        ? (int) $_GET['page']
+        : 1;
 
 if ($currentPage < 1) {
     $currentPage = 1;
@@ -669,27 +1126,48 @@ $countParams = [];
 $countTypes = '';
 
 if ($filterGrade > 0) {
-    $countSql .= " AND grade = ?";
+
+    $countSql .=
+        " AND grade = ?";
+
     $countTypes .= 'i';
-    $countParams[] = $filterGrade;
+
+    $countParams[] =
+        $filterGrade;
 }
 
 if ($searchSubject !== '') {
-    $countSql .= " AND subject_name LIKE ?";
+
+    $countSql .=
+        " AND subject_name LIKE ?";
+
     $countTypes .= 's';
-    $countParams[] = '%' . $searchSubject . '%';
+
+    $countParams[] =
+        '%' .
+        $searchSubject .
+        '%';
 }
 
 $totalAssignments = 0;
 
-$stmt = $conn->prepare($countSql);
+$stmt =
+    $conn->prepare($countSql);
 
 if ($stmt) {
-    if (!empty($countParams)) {
-        $bindValues = [$countTypes];
 
-        foreach ($countParams as $key => $value) {
-            $bindValues[] = &$countParams[$key];
+    if (!empty($countParams)) {
+
+        $bindValues =
+            [$countTypes];
+
+        foreach (
+            $countParams
+            as $key => $value
+        ) {
+
+            $bindValues[] =
+                &$countParams[$key];
         }
 
         call_user_func_array(
@@ -700,24 +1178,35 @@ if ($stmt) {
 
     $stmt->execute();
 
-    $result = $stmt->get_result();
-    $countRow = $result->fetch_assoc();
+    $result =
+        $stmt->get_result();
+
+    $countRow =
+        $result->fetch_assoc();
 
     $totalAssignments =
-        (int) ($countRow['total'] ?? 0);
+        (int) (
+            $countRow['total'] ?? 0
+        );
 
     $stmt->close();
 }
 
-$totalPages = max(
-    1,
-    (int) ceil(
-        $totalAssignments / $itemsPerPage
-    )
-);
+$totalPages =
+    max(
+        1,
+        (int) ceil(
+            $totalAssignments /
+            $itemsPerPage
+        )
+    );
 
-if ($currentPage > $totalPages) {
-    $currentPage = $totalPages;
+if (
+    $currentPage >
+    $totalPages
+) {
+    $currentPage =
+        $totalPages;
 }
 
 $offset =
@@ -749,15 +1238,27 @@ $params = [];
 $types = '';
 
 if ($filterGrade > 0) {
-    $sql .= " AND grade = ?";
+
+    $sql .=
+        " AND grade = ?";
+
     $types .= 'i';
-    $params[] = $filterGrade;
+
+    $params[] =
+        $filterGrade;
 }
 
 if ($searchSubject !== '') {
-    $sql .= " AND subject_name LIKE ?";
+
+    $sql .=
+        " AND subject_name LIKE ?";
+
     $types .= 's';
-    $params[] = '%' . $searchSubject . '%';
+
+    $params[] =
+        '%' .
+        $searchSubject .
+        '%';
 }
 
 $sql .= "
@@ -768,17 +1269,30 @@ $sql .= "
 ";
 
 $types .= 'ii';
-$params[] = $itemsPerPage;
-$params[] = $offset;
 
-$stmt = $conn->prepare($sql);
+$params[] =
+    $itemsPerPage;
+
+$params[] =
+    $offset;
+
+$stmt =
+    $conn->prepare($sql);
 
 if ($stmt) {
-    if (!empty($params)) {
-        $bindValues = [$types];
 
-        foreach ($params as $key => $value) {
-            $bindValues[] = &$params[$key];
+    if (!empty($params)) {
+
+        $bindValues =
+            [$types];
+
+        foreach (
+            $params
+            as $key => $value
+        ) {
+
+            $bindValues[] =
+                &$params[$key];
         }
 
         call_user_func_array(
@@ -789,10 +1303,16 @@ if ($stmt) {
 
     $stmt->execute();
 
-    $result = $stmt->get_result();
+    $result =
+        $stmt->get_result();
 
-    while ($row = $result->fetch_assoc()) {
-        $assignments[] = $row;
+    while (
+        $row =
+        $result->fetch_assoc()
+    ) {
+
+        $assignments[] =
+            $row;
     }
 
     $stmt->close();
@@ -809,16 +1329,19 @@ function paginationUrl(
     int $filterGrade,
     string $searchSubject
 ): string {
+
     $query = [
         'page' => $page
     ];
 
     if ($filterGrade > 0) {
-        $query['grade'] = $filterGrade;
+        $query['grade'] =
+            $filterGrade;
     }
 
     if ($searchSubject !== '') {
-        $query['subject'] = $searchSubject;
+        $query['subject'] =
+            $searchSubject;
     }
 
     return 'subjectassignment.php?' .
@@ -831,14 +1354,17 @@ function paginationUrl(
 |--------------------------------------------------------------------------
 */
 
-$displayStart = $totalAssignments > 0
-    ? $offset + 1
-    : 0;
+$displayStart =
+    $totalAssignments > 0
+        ? $offset + 1
+        : 0;
 
-$displayEnd = min(
-    $offset + count($assignments),
-    $totalAssignments
-);
+$displayEnd =
+    min(
+        $offset +
+        count($assignments),
+        $totalAssignments
+    );
 
 ?>
 <!DOCTYPE html>
@@ -857,7 +1383,6 @@ $displayEnd = min(
         Subject Assignment | BKHS Admin
     </title>
 
-    <!-- Favicon -->
     <link
         rel="icon"
         type="image/webp"
@@ -1148,12 +1673,6 @@ $displayEnd = min(
             font-weight: 700;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Pagination
-        |--------------------------------------------------------------------------
-        */
-
         .pagination-wrapper {
             padding: 18px 22px;
             border-top: 1px solid #edf0f4;
@@ -1251,7 +1770,6 @@ $displayEnd = min(
             .page-number:nth-child(n + 7):not(:last-child) {
                 display: none;
             }
-
         }
 
     </style>
@@ -1262,7 +1780,6 @@ $displayEnd = min(
 
 <div class="admin-layout">
 
-    <!-- Sidebar -->
     <aside class="admin-sidebar">
 
         <div class="sidebar-header">
@@ -1301,8 +1818,6 @@ $displayEnd = min(
                 <span>Users</span>
             </a>
 
-          
-
             <a
                 href="subjectassignment.php"
                 class="sidebar-link active"
@@ -1323,10 +1838,8 @@ $displayEnd = min(
 
     </aside>
 
-    <!-- Main -->
     <main class="admin-main">
 
-        <!-- Topbar -->
         <header class="admin-topbar">
 
             <button
@@ -1366,7 +1879,6 @@ $displayEnd = min(
 
         </header>
 
-        <!-- Content -->
         <div class="admin-content">
 
             <div class="page-header">
@@ -1425,7 +1937,6 @@ $displayEnd = min(
 
             <?php endif; ?>
 
-            <!-- Create / Edit -->
             <div class="assignment-card mb-4">
 
                 <div class="assignment-card-header">
@@ -1517,13 +2028,12 @@ $displayEnd = min(
 
                                         <option
                                             value="<?= $grade ?>"
-                                            <?=
-                                                (
-                                                    (string) $formGrade ===
-                                                    (string) $grade
-                                                )
-                                                    ? 'selected'
-                                                    : ''
+                                            <?= (
+                                                (string) $formGrade ===
+                                                (string) $grade
+                                            )
+                                                ? 'selected'
+                                                : ''
                                             ?>
                                         >
                                             Grade <?= $grade ?>
@@ -1604,9 +2114,7 @@ $displayEnd = min(
 
                                         </div>
 
-                                        <div
-                                            class="current-book-actions"
-                                        >
+                                        <div class="current-book-actions">
 
                                             <a
                                                 href="../<?= e(
@@ -1675,7 +2183,6 @@ $displayEnd = min(
 
             </div>
 
-            <!-- Filter -->
             <div class="assignment-card mb-4">
 
                 <div class="assignment-card-body">
@@ -1726,10 +2233,9 @@ $displayEnd = min(
 
                                         <option
                                             value="<?= $grade ?>"
-                                            <?=
-                                                $filterGrade === $grade
-                                                    ? 'selected'
-                                                    : ''
+                                            <?= $filterGrade === $grade
+                                                ? 'selected'
+                                                : ''
                                             ?>
                                         >
                                             Grade <?= $grade ?>
@@ -1804,7 +2310,6 @@ $displayEnd = min(
 
             </div>
 
-            <!-- Assignment List -->
             <div class="assignment-card">
 
                 <div class="assignment-card-header">
@@ -1860,25 +2365,15 @@ $displayEnd = min(
 
                                 <tr>
 
-                                    <th>
-                                        #
-                                    </th>
+                                    <th>#</th>
 
-                                    <th>
-                                        Grade
-                                    </th>
+                                    <th>Grade</th>
 
-                                    <th>
-                                        Subject
-                                    </th>
+                                    <th>Subject</th>
 
-                                    <th>
-                                        Book
-                                    </th>
+                                    <th>Book</th>
 
-                                    <th>
-                                        Status
-                                    </th>
+                                    <th>Status</th>
 
                                     <th class="text-end">
                                         Actions
@@ -1907,9 +2402,7 @@ $displayEnd = min(
 
                                         <td>
 
-                                            <span
-                                                class="grade-badge"
-                                            >
+                                            <span class="grade-badge">
                                                 Grade
                                                 <?= (int) $assignment['grade'] ?>
                                             </span>
@@ -1918,12 +2411,12 @@ $displayEnd = min(
 
                                         <td>
 
-                                            <span
-                                                class="subject-name"
-                                            >
+                                            <span class="subject-name">
+
                                                 <?= e(
                                                     $assignment['subject_name']
                                                 ) ?>
+
                                             </span>
 
                                         </td>
@@ -2093,7 +2586,6 @@ $displayEnd = min(
 
                 </div>
 
-                <!-- Pagination -->
                 <?php if (
                     $totalAssignments > 0 &&
                     $totalPages > 1
@@ -2104,6 +2596,7 @@ $displayEnd = min(
                         <div class="pagination-info">
 
                             Showing
+
                             <strong>
                                 <?= $displayStart ?>
                             </strong>
@@ -2130,7 +2623,6 @@ $displayEnd = min(
 
                             <ul class="pagination">
 
-                                <!-- Previous -->
                                 <li
                                     class="page-item <?= $currentPage <= 1
                                         ? 'disabled'
@@ -2159,9 +2651,7 @@ $displayEnd = min(
 
                                     <?php else: ?>
 
-                                        <span
-                                            class="page-link"
-                                        >
+                                        <span class="page-link">
 
                                             <i
                                                 class="bi bi-chevron-left"
@@ -2174,19 +2664,18 @@ $displayEnd = min(
                                 </li>
 
                                 <?php
-                                /*
-                                 * Keep pagination compact when there
-                                 * are many pages.
-                                 */
-                                $startPage = max(
-                                    1,
-                                    $currentPage - 2
-                                );
 
-                                $endPage = min(
-                                    $totalPages,
-                                    $currentPage + 2
-                                );
+                                $startPage =
+                                    max(
+                                        1,
+                                        $currentPage - 2
+                                    );
+
+                                $endPage =
+                                    min(
+                                        $totalPages,
+                                        $currentPage + 2
+                                    );
 
                                 if ($startPage > 1):
                                 ?>
@@ -2248,7 +2737,9 @@ $displayEnd = min(
                                                 )
                                             ) ?>"
                                         >
+
                                             <?= $page ?>
+
                                         </a>
 
                                     </li>
@@ -2256,11 +2747,13 @@ $displayEnd = min(
                                 <?php endfor; ?>
 
                                 <?php if (
-                                    $endPage < $totalPages
+                                    $endPage <
+                                    $totalPages
                                 ): ?>
 
                                     <?php if (
-                                        $endPage < $totalPages - 1
+                                        $endPage <
+                                        $totalPages - 1
                                     ): ?>
 
                                         <li
@@ -2287,14 +2780,15 @@ $displayEnd = min(
                                                 )
                                             ) ?>"
                                         >
+
                                             <?= $totalPages ?>
+
                                         </a>
 
                                     </li>
 
                                 <?php endif; ?>
 
-                                <!-- Next -->
                                 <li
                                     class="page-item <?= $currentPage >= $totalPages
                                         ? 'disabled'
@@ -2302,7 +2796,8 @@ $displayEnd = min(
                                 >
 
                                     <?php if (
-                                        $currentPage < $totalPages
+                                        $currentPage <
+                                        $totalPages
                                     ): ?>
 
                                         <a
@@ -2325,9 +2820,7 @@ $displayEnd = min(
 
                                     <?php else: ?>
 
-                                        <span
-                                            class="page-link"
-                                        >
+                                        <span class="page-link">
 
                                             <i
                                                 class="bi bi-chevron-right"
@@ -2369,7 +2862,6 @@ function toggleSidebar() {
     if (sidebar) {
         sidebar.classList.toggle('show');
     }
-
 }
 
 function confirmDelete(
@@ -2386,7 +2878,6 @@ function confirmDelete(
         '?\n\n' +
         'If this subject has a book PDF, the uploaded book will also be deleted.'
     );
-
 }
 
 </script>
@@ -2394,4 +2885,3 @@ function confirmDelete(
 </body>
 
 </html>
-

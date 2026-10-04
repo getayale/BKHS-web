@@ -34,23 +34,26 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
 ?>
 
 <!DOCTYPE html>
+
 <html lang="en">
 
 <head>
 
-    <meta charset="UTF-8">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<meta charset="UTF-8">
 
-    <meta
-        name="description"
-        content="Bole Kale Hiwot School Management System - Admin Dashboard"
-    >
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
-    <title>Admin Dashboard | BKHS</title>
+<meta
+    name="description"
+    content="Bole Kale Hiwot School Management System - Admin Dashboard"
+>
+
+<title>Admin Dashboard | BKHS</title>
+
 
    <link
         rel="icon"
@@ -59,51 +62,51 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
     >
     <!-- Google Fonts -->
 
-    <link
-        rel="preconnect"
-        href="https://fonts.googleapis.com"
-    >
 
-    <link
-        rel="preconnect"
-        href="https://fonts.googleapis.com"
-        crossorigin
-    >
+<link
+    rel="preconnect"
+    href="https://fonts.googleapis.com"
+>
 
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
-        rel="stylesheet"
-    >
+<link
+    rel="preconnect"
+    href="https://fonts.googleapis.com"
+    crossorigin
+>
 
-
-    <!-- Bootstrap -->
-
-    <link
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-        rel="stylesheet"
-    >
+<link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap"
+    rel="stylesheet"
+>
 
 
-    <!-- Bootstrap Icons -->
+<!-- Bootstrap -->
 
-    <link
-        rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
-    >
+<link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+>
 
 
-    <!-- Admin CSS -->
+<!-- Bootstrap Icons -->
 
-    <link
-        rel="stylesheet"
-        href="../public/css/admin.css"
-    >
+<link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+>
+
+
+<!-- Admin CSS -->
+
+<link
+    rel="stylesheet"
+    href="../public/css/admin.css"
+>
+
 
 </head>
 
-
 <body>
-
 
 <!-- =====================================================
      MOBILE OVERLAY
@@ -114,8 +117,6 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
     id="sidebarOverlay"
 ></div>
 
-
-
 <!-- =====================================================
      SIDEBAR
 ===================================================== -->
@@ -125,231 +126,277 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
     id="adminSidebar"
 >
 
-    <!-- Brand -->
 
-    <div class="sidebar-brand">
+<!-- Brand -->
 
-        <div class="brand-mark">
-            <i class="bi bi-grid-1x2-fill"></i>
-        </div>
+<div class="sidebar-brand">
 
-        <div class="brand-text">
+    <div class="brand-mark">
+        <i class="bi bi-grid-1x2-fill"></i>
+    </div>
 
-            <strong>
-                BKHS
-            </strong>
+    <div class="brand-text">
 
-            <span>
-                Administration
-            </span>
+        <strong>
+            BKHS
+        </strong>
 
-        </div>
-
-        <button
-            type="button"
-            class="sidebar-close"
-            id="sidebarClose"
-        >
-            <i class="bi bi-x-lg"></i>
-        </button>
+        <span>
+            Administration
+        </span>
 
     </div>
 
+    <button
+        type="button"
+        class="sidebar-close"
+        id="sidebarClose"
+    >
+        <i class="bi bi-x-lg"></i>
+    </button>
 
-    <!-- Navigation -->
-
-    <nav class="sidebar-nav">
-
-        <div class="nav-section-title">
-            MAIN
-        </div>
-
-
-        <a
-            href="dashboard.php"
-            class="sidebar-link active"
-        >
-
-            <i class="bi bi-grid-1x2"></i>
-
-            <span>
-                Dashboard
-            </span>
-
-        </a>
+</div>
 
 
-     <a
-    href="users/index.php"
-    class="sidebar-link"
->
-    <i class="bi bi-people"></i>
+<!-- Navigation -->
 
-    <span>
-        Users
-    </span>
-</a>
+<nav class="sidebar-nav">
 
-
-        <a
-            href="#"
-            class="sidebar-link"
-        >
-
-            <i class="bi bi-mortarboard"></i>
-
-            <span>
-                Students
-            </span>
-
-        </a>
-
-
-        <a
-            href="#"
-            class="sidebar-link"
-        >
-
-            <i class="bi bi-person-workspace"></i>
-
-            <span>
-                Staff
-            </span>
-
-        </a>
-
-
-        <div class="nav-section-title">
-            ACADEMIC
-        </div>
-
-
-     <a
-    href="subjectassignment.php"
-    class="sidebar-link"
->
-    <i class="bi bi-book"></i>
-
-    <span>
-        Subjects
-    </span>
-</a>
-
-
-        <a
-            href="#"
-            class="sidebar-link"
-        >
-
-            <i class="bi bi-building"></i>
-
-            <span>
-                Classes
-            </span>
-
-        </a>
+    <div class="nav-section-title">
+        MAIN
+    </div>
 
 
     <a
-    href="academic-calendar/index.php"
-    class="sidebar-link"
->
-    <i class="bi bi-calendar3"></i>
+        href="dashboard.php"
+        class="sidebar-link active"
+    >
 
-    <span>
-        Academic Calendar
-    </span>
+        <i class="bi bi-grid-1x2"></i>
+
+        <span>
+            Dashboard
+        </span>
+
+    </a>
+
+
+ <a
+href="users/index.php"
+class="sidebar-link"
+
+
+>
+
+
+<i class="bi bi-people"></i>
+
+
+
+<span>
+    Users
+</span>
+
+
 </a>
 
 
-        <div class="nav-section-title">
-            MANAGEMENT
-        </div>
+    <a
+        href="#"
+        class="sidebar-link"
+    >
+
+        <i class="bi bi-mortarboard"></i>
+
+        <span>
+            Students
+        </span>
+
+    </a>
 
 
-       <a
-    href="gallery.php"
-    class="sidebar-link"
->
-    <i class="bi bi-wallet2"></i>
+    <a
+        href="#"
+        class="sidebar-link"
+    >
 
-    <span>
-       Gallery
-    </span>
-</a>
+        <i class="bi bi-person-workspace"></i>
 
+        <span>
+            Staff
+        </span>
 
-        <a
-            href="#"
-            class="sidebar-link"
-        >
-
-            <i class="bi bi-megaphone"></i>
-
-            <span>
-                Announcements
-            </span>
-
-        </a>
+    </a>
 
 
-        <a
-            href="#"
-            class="sidebar-link"
-        >
-
-            <i class="bi bi-bar-chart"></i>
-
-            <span>
-                Reports
-            </span>
-
-        </a>
-
-
-        <div class="nav-section-title">
-            SYSTEM
-        </div>
-
-
-        <a
-            href="#"
-            class="sidebar-link"
-        >
-
-            <i class="bi bi-gear"></i>
-
-            <span>
-                Settings
-            </span>
-
-        </a>
-
-    </nav>
-
-
-    <!-- Sidebar Footer -->
-
-    <div class="sidebar-footer">
-
-        <a
-            href="../auth/logout.php"
-            class="logout-link"
-        >
-
-            <i class="bi bi-box-arrow-right"></i>
-
-            <span>
-                Sign out
-            </span>
-
-        </a>
-
+    <div class="nav-section-title">
+        ACADEMIC
     </div>
 
+
+ <a
+href="subjectassignment.php"
+class="sidebar-link"
+
+
+>
+
+
+<i class="bi bi-book"></i>
+
+
+
+<span>
+    Subjects
+</span>
+
+
+</a>
+
+
+    <a
+        href="#"
+        class="sidebar-link"
+    >
+
+        <i class="bi bi-building"></i>
+
+        <span>
+            Classes
+        </span>
+
+    </a>
+
+
+<a
+href="academic-calendar/index.php"
+class="sidebar-link"
+
+
+>
+
+
+<i class="bi bi-calendar3"></i>
+
+
+
+<span>
+    Academic Calendar
+</span>
+
+
+</a>
+
+
+    <div class="nav-section-title">
+        MANAGEMENT
+    </div>
+
+
+   <a
+href="gallery.php"
+class="sidebar-link"
+
+
+>
+
+
+<i class="bi bi-wallet2"></i>
+
+
+
+<span>
+   Gallery
+</span>
+
+
+</a>
+
+
+    <a
+        href="backup.php"
+        class="sidebar-link"
+    >
+
+        <i class="bi bi-cloud-arrow-down"></i>
+
+        <span>
+            Backup
+        </span>
+
+    </a>
+
+
+    <a
+        href="#"
+        class="sidebar-link"
+    >
+
+        <i class="bi bi-bar-chart"></i>
+
+        <span>
+            Reports
+        </span>
+
+    </a>
+
+
+    <div class="nav-section-title">
+        SYSTEM
+    </div>
+
+
+    <a
+        href="#"
+        class="sidebar-link"
+    >
+
+        <i class="bi bi-gear"></i>
+
+        <span>
+            Settings
+        </span>
+
+    </a>
+
+
+    <a
+        href="audit.php"
+        class="sidebar-link"
+    >
+
+        <i class="bi bi-shield-check"></i>
+
+        <span>
+            Audit Log
+        </span>
+
+    </a>
+
+</nav>
+
+
+<!-- Sidebar Footer -->
+
+<div class="sidebar-footer">
+
+    <a
+        href="../auth/logout.php"
+        class="logout-link"
+    >
+
+        <i class="bi bi-box-arrow-right"></i>
+
+        <span>
+            Sign out
+        </span>
+
+    </a>
+
+</div>
+
+
 </aside>
-
-
 
 <!-- =====================================================
      MAIN CONTENT
@@ -358,387 +405,381 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
 <div class="admin-main">
 
 
-    <!-- =================================================
-         TOPBAR
-    ================================================== -->
+<!-- =================================================
+     TOPBAR
+================================================== -->
 
-    <header class="admin-topbar">
+<header class="admin-topbar">
+
+    <button
+        type="button"
+        class="mobile-menu-button"
+        id="mobileMenuButton"
+    >
+
+        <i class="bi bi-list"></i>
+
+    </button>
+
+
+    <div class="topbar-title">
+
+        <span>
+            Administration
+        </span>
+
+        <h1>
+            Dashboard
+        </h1>
+
+    </div>
+
+
+    <div class="topbar-actions">
+
+
+        <!-- Notifications -->
 
         <button
             type="button"
-            class="mobile-menu-button"
-            id="mobileMenuButton"
+            class="topbar-icon-button"
+            title="Notifications"
         >
 
-            <i class="bi bi-list"></i>
+            <i class="bi bi-bell"></i>
+
+            <span class="notification-dot"></span>
 
         </button>
 
 
-        <div class="topbar-title">
+        <!-- Profile -->
 
-            <span>
-                Administration
-            </span>
+        <div class="admin-profile">
 
-            <h1>
-                Dashboard
-            </h1>
+            <div class="profile-avatar">
 
-        </div>
-
-
-        <div class="topbar-actions">
-
-
-            <!-- Notifications -->
-
-            <button
-                type="button"
-                class="topbar-icon-button"
-                title="Notifications"
-            >
-
-                <i class="bi bi-bell"></i>
-
-                <span class="notification-dot"></span>
-
-            </button>
-
-
-            <!-- Profile -->
-
-            <div class="admin-profile">
-
-                <div class="profile-avatar">
-
-                    <?php
-                    echo strtoupper(
-                        substr($fullName, 0, 1)
-                    );
-                    ?>
-
-                </div>
-
-                <div class="profile-info">
-
-                    <strong>
-                        <?php echo htmlspecialchars($fullName); ?>
-                    </strong>
-
-                    <span>
-                        Administrator
-                    </span>
-
-                </div>
-
-                <i class="bi bi-chevron-down profile-chevron"></i>
+                <?php
+                echo strtoupper(
+                    substr($fullName, 0, 1)
+                );
+                ?>
 
             </div>
 
+            <div class="profile-info">
+
+                <strong>
+                    <?php echo htmlspecialchars($fullName); ?>
+                </strong>
+
+                <span>
+                    Administrator
+                </span>
+
+            </div>
+
+            <i class="bi bi-chevron-down profile-chevron"></i>
+
         </div>
 
-    </header>
+    </div>
+
+</header>
+
+
+
+<!-- =================================================
+     PAGE CONTENT
+================================================== -->
+
+<main class="admin-content">
+
+
+    <!-- Welcome -->
+
+    <section class="welcome-section">
+
+        <div>
+
+        </div>
+
+        <div class="welcome-date">
+
+            <i class="bi bi-calendar3"></i>
+
+            <?php echo date('F d, Y'); ?>
+
+        </div>
+
+    </section>
 
 
 
     <!-- =================================================
-         PAGE CONTENT
+         STATISTICS
     ================================================== -->
 
-    <main class="admin-content">
+    <section class="dashboard-stats">
 
+        <div class="stat-card">
 
-        <!-- Welcome -->
+            <div class="stat-icon students">
+                <i class="bi bi-mortarboard-fill"></i>
+            </div>
 
-        <section class="welcome-section">
+            <div class="stat-content">
 
-            <div>
+                <span>
+                    Total Students
+                </span>
 
-               
+                <strong>
+                    0
+                </strong>
 
-             
+                <small>
+                    <i class="bi bi-arrow-up"></i>
+                    Current enrollment
+                </small>
 
             </div>
 
-            <div class="welcome-date">
+        </div>
 
-                <i class="bi bi-calendar3"></i>
 
-                <?php echo date('F d, Y'); ?>
+        <div class="stat-card">
+
+            <div class="stat-icon teachers">
+                <i class="bi bi-person-workspace"></i>
+            </div>
+
+            <div class="stat-content">
+
+                <span>
+                    Teachers
+                </span>
+
+                <strong>
+                    0
+                </strong>
+
+                <small>
+                    Active teaching staff
+                </small>
 
             </div>
 
-        </section>
+        </div>
+
+
+        <div class="stat-card">
+
+            <div class="stat-icon parents">
+                <i class="bi bi-people-fill"></i>
+            </div>
+
+            <div class="stat-content">
+
+                <span>
+                    Parents
+                </span>
+
+                <strong>
+                    0
+                </strong>
+
+                <small>
+                    Registered parents
+                </small>
+
+            </div>
+
+        </div>
+
+
+        <div class="stat-card">
+
+            <div class="stat-icon classes">
+                <i class="bi bi-building"></i>
+            </div>
+
+            <div class="stat-content">
+
+                <span>
+                    Classes
+                </span>
+
+                <strong>
+                    0
+                </strong>
+
+                <small>
+                    Active sections
+                </small>
+
+            </div>
+
+        </div>
+
+    </section>
 
 
 
-        <!-- =================================================
-             STATISTICS
-        ================================================== -->
+    <!-- =================================================
+         DASHBOARD GRID
+    ================================================== -->
 
-        <section class="dashboard-stats">
+    <section class="dashboard-grid">
 
-            <div class="stat-card">
 
-                <div class="stat-icon students">
-                    <i class="bi bi-mortarboard-fill"></i>
-                </div>
+        <!-- Recent Activity -->
 
-                <div class="stat-content">
+        <div class="dashboard-card activity-card">
 
-                    <span>
-                        Total Students
+            <div class="card-header">
+
+                <div>
+
+                    <span class="card-eyebrow">
+                        OVERVIEW
                     </span>
 
-                    <strong>
-                        0
-                    </strong>
-
-                    <small>
-                        <i class="bi bi-arrow-up"></i>
-                        Current enrollment
-                    </small>
+                    <h3>
+                        Recent Activity
+                    </h3>
 
                 </div>
+
+                <button
+                    class="card-action"
+                    type="button"
+                >
+                    View all
+                </button>
 
             </div>
 
 
-            <div class="stat-card">
+            <div class="empty-state">
 
-                <div class="stat-icon teachers">
-                    <i class="bi bi-person-workspace"></i>
+                <div class="empty-icon">
+                    <i class="bi bi-activity"></i>
                 </div>
 
-                <div class="stat-content">
+                <h4>
+                    No recent activity
+                </h4>
 
-                    <span>
-                        Teachers
+                <p>
+                    School activities will appear here.
+                </p>
+
+            </div>
+
+        </div>
+
+
+
+        <!-- Quick Actions -->
+
+        <div class="dashboard-card quick-card">
+
+            <div class="card-header">
+
+                <div>
+
+                    <span class="card-eyebrow">
+                        ACTIONS
                     </span>
 
-                    <strong>
-                        0
-                    </strong>
-
-                    <small>
-                        Active teaching staff
-                    </small>
+                    <h3>
+                        Quick Actions
+                    </h3>
 
                 </div>
 
             </div>
 
 
-            <div class="stat-card">
+            <div class="quick-actions">
 
-                <div class="stat-icon parents">
-                    <i class="bi bi-people-fill"></i>
-                </div>
+                <a href="#" class="quick-action">
 
-                <div class="stat-content">
-
-                    <span>
-                        Parents
+                    <span class="quick-action-icon">
+                        <i class="bi bi-person-plus"></i>
                     </span>
 
-                    <strong>
-                        0
-                    </strong>
-
-                    <small>
-                        Registered parents
-                    </small>
-
-                </div>
-
-            </div>
-
-
-            <div class="stat-card">
-
-                <div class="stat-icon classes">
-                    <i class="bi bi-building"></i>
-                </div>
-
-                <div class="stat-content">
-
                     <span>
-                        Classes
+                        Add User
                     </span>
 
-                    <strong>
-                        0
-                    </strong>
+                    <i class="bi bi-chevron-right"></i>
 
-                    <small>
-                        Active sections
-                    </small>
-
-                </div>
-
-            </div>
-
-        </section>
+                </a>
 
 
+                <a href="#" class="quick-action">
 
-        <!-- =================================================
-             DASHBOARD GRID
-        ================================================== -->
+                    <span class="quick-action-icon">
+                        <i class="bi bi-mortarboard"></i>
+                    </span>
 
-        <section class="dashboard-grid">
+                    <span>
+                        Add Student
+                    </span>
 
+                    <i class="bi bi-chevron-right"></i>
 
-            <!-- Recent Activity -->
-
-            <div class="dashboard-card activity-card">
-
-                <div class="card-header">
-
-                    <div>
-
-                        <span class="card-eyebrow">
-                            OVERVIEW
-                        </span>
-
-                        <h3>
-                            Recent Activity
-                        </h3>
-
-                    </div>
-
-                    <button
-                        class="card-action"
-                        type="button"
-                    >
-                        View all
-                    </button>
-
-                </div>
+                </a>
 
 
-                <div class="empty-state">
+                <a href="backup.php" class="quick-action">
 
-                    <div class="empty-icon">
-                        <i class="bi bi-activity"></i>
-                    </div>
+                    <span class="quick-action-icon">
+                        <i class="bi bi-cloud-arrow-down"></i>
+                    </span>
 
-                    <h4>
-                        No recent activity
-                    </h4>
+                    <span>
+                        Backup
+                    </span>
 
-                    <p>
-                        School activities will appear here.
-                    </p>
+                    <i class="bi bi-chevron-right"></i>
 
-                </div>
+                </a>
+
+
+                <a href="#" class="quick-action">
+
+                    <span class="quick-action-icon">
+                        <i class="bi bi-file-earmark-bar-graph"></i>
+                    </span>
+
+                    <span>
+                        Generate Report
+                    </span>
+
+                    <i class="bi bi-chevron-right"></i>
+
+                </a>
 
             </div>
 
+        </div>
+
+    </section>
 
 
-            <!-- Quick Actions -->
+</main>
 
-            <div class="dashboard-card quick-card">
-
-                <div class="card-header">
-
-                    <div>
-
-                        <span class="card-eyebrow">
-                            ACTIONS
-                        </span>
-
-                        <h3>
-                            Quick Actions
-                        </h3>
-
-                    </div>
-
-                </div>
-
-
-                <div class="quick-actions">
-
-                    <a href="#" class="quick-action">
-
-                        <span class="quick-action-icon">
-                            <i class="bi bi-person-plus"></i>
-                        </span>
-
-                        <span>
-                            Add User
-                        </span>
-
-                        <i class="bi bi-chevron-right"></i>
-
-                    </a>
-
-
-                    <a href="#" class="quick-action">
-
-                        <span class="quick-action-icon">
-                            <i class="bi bi-mortarboard"></i>
-                        </span>
-
-                        <span>
-                            Add Student
-                        </span>
-
-                        <i class="bi bi-chevron-right"></i>
-
-                    </a>
-
-
-                    <a href="#" class="quick-action">
-
-                        <span class="quick-action-icon">
-                            <i class="bi bi-megaphone"></i>
-                        </span>
-
-                        <span>
-                            Create Announcement
-                        </span>
-
-                        <i class="bi bi-chevron-right"></i>
-
-                    </a>
-
-
-                    <a href="#" class="quick-action">
-
-                        <span class="quick-action-icon">
-                            <i class="bi bi-file-earmark-bar-graph"></i>
-                        </span>
-
-                        <span>
-                            Generate Report
-                        </span>
-
-                        <i class="bi bi-chevron-right"></i>
-
-                    </a>
-
-                </div>
-
-            </div>
-
-        </section>
-
-
-    </main>
 
 </div>
-
-
 
 <!-- Bootstrap JS -->
 
 <script
     src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
 ></script>
-
 
 <!-- Sidebar JS -->
 
@@ -811,7 +852,6 @@ window.addEventListener(
 );
 
 </script>
-
 
 </body>
 

@@ -21,6 +21,7 @@ if (
 }
 
 require_once '../../config/database.php';
+require_once '../../includes/AuditLogger.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -75,6 +76,20 @@ $phone = '';
 $role = '';
 
 $currentSignaturePath = null;
+
+/*
+|--------------------------------------------------------------------------
+| Original User Values
+|--------------------------------------------------------------------------
+*/
+
+$originalUser = [
+    'full_name' => '',
+    'email' => '',
+    'phone' => '',
+    'role' => '',
+    'signature_path' => null
+];
 
 /*
 |--------------------------------------------------------------------------
@@ -585,6 +600,12 @@ $user = $result->fetch_assoc();
 
 $stmt->close();
 
+/*
+|--------------------------------------------------------------------------
+| Current User Values
+|--------------------------------------------------------------------------
+*/
+
 $full_name =
     (string) ($user['full_name'] ?? '');
 
@@ -601,6 +622,20 @@ $currentSignaturePath =
     !empty($user['signature_path'])
         ? (string) $user['signature_path']
         : null;
+
+/*
+|--------------------------------------------------------------------------
+| Preserve Original Values For Audit
+|--------------------------------------------------------------------------
+*/
+
+$originalUser = [
+    'full_name' => $full_name,
+    'email' => $email,
+    'phone' => $phone,
+    'role' => $role,
+    'signature_path' => $currentSignaturePath
+];
 
 /*
 |--------------------------------------------------------------------------
@@ -996,8 +1031,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             /*
             |--------------------------------------------------------------------------
-            | IMPORTANT:
-            | Admin, Registrar, Principal and Teacher signatures are preserved.
+            | Roles Without Signature
             |--------------------------------------------------------------------------
             |
             | Librarian does not use the signature field.
@@ -1022,6 +1056,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $password,
                         PASSWORD_DEFAULT
                     );
+
+                if ($hashedPassword === false) {
+                    throw new RuntimeException(
+                        'Unable to secure the new password.'
+                    );
+                }
 
                 $stmt = $conn->prepare(
                     "UPDATE users
@@ -1071,8 +1111,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $stmt->execute();
+
             $stmt->close();
             $stmt = null;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Build Audit Changes
+            |--------------------------------------------------------------------------
+            */
+
+            $oldValues = [];
+            $newValues = [];
+
+            if (
+                $originalUser['full_name'] !==
+                $full_name
+            ) {
+
+                $oldValues['full_name'] =
+                    $originalUser['full_name'];
+
+                $newValues['full_name'] =
+                    $full_name;
+            }
+
+            if (
+                $originalUser['email'] !==
+                $email
+            ) {
+
+                $oldValues['email'] =
+                    $originalUser['email'];
+
+                $newValues['email'] =
+                    $email;
+            }
+
+            if (
+                $originalUser['phone'] !==
+                $phone
+            ) {
+
+                $oldValues['phone'] =
+                    $originalUser['phone'];
+
+                $newValues['phone'] =
+                    $phone;
+            }
+
+            if (
+                $originalUser['role'] !==
+                $role
+            ) {
+
+                $oldValues['role'] =
+                    $originalUser['role'];
+
+                $newValues['role'] =
+                    $role;
+            }
+
+            if (
+                $originalUser['signature_path'] !==
+                $newSignaturePath
+            ) {
+
+                $oldValues['signature_path'] =
+                    $originalUser['signature_path'];
+
+                $newValues['signature_path'] =
+                    $newSignaturePath;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Password Change
+            |--------------------------------------------------------------------------
+            |
+            | Never store the actual password or password hash.
+            |
+            */
+
+            if ($password !== '') {
+
+                $oldValues['password'] =
+                    'Password unchanged value not stored';
+
+                $newValues['password'] =
+                    'Password changed';
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Write Audit Log
+            |--------------------------------------------------------------------------
+            */
+
+            AuditLogger::log(
+                $conn,
+                'USER_UPDATED',
+                'Updated user account information',
+                'user',
+                (string) $userId,
+                !empty($oldValues)
+                    ? $oldValues
+                    : null,
+                !empty($newValues)
+                    ? $newValues
+                    : null
+            );
 
             /*
             |--------------------------------------------------------------------------
@@ -1089,6 +1237,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $oldSignaturePath
                 );
             }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Success
+            |--------------------------------------------------------------------------
+            */
 
             $_SESSION['success'] =
                 'User updated successfully.';
@@ -1238,7 +1392,6 @@ $showSignature =
     >
 
     <title>Edit User | Admin</title>
-
 
     <link
         rel="icon"
@@ -2431,12 +2584,6 @@ const removeSignature =
 |--------------------------------------------------------------------------
 | Signature Roles
 |--------------------------------------------------------------------------
-|
-| Admin
-| Principal
-| Teacher
-| Registrar
-|
 */
 
 function canHaveSignature(role) {

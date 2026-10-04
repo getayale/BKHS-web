@@ -19,333 +19,250 @@ require_once '../config/database.php';
 
 $registrarId = (int) $_SESSION['user_id'];
 
-if (!isset($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
+$errorMessage = '';
+$successMessage = '';
 
-$csrfToken = $_SESSION['csrf_token'];
+$search = trim((string) ($_GET['search'] ?? ''));
+$teacherId = (int) ($_GET['teacher_id'] ?? $_POST['teacher_id'] ?? 0);
 
-$success = $_SESSION['success'] ?? '';
-$error = $_SESSION['error'] ?? '';
+$registrar = null;
+$teacher = null;
+$searchResults = [];
 
-unset($_SESSION['success'], $_SESSION['error']);
+$transactionStarted = false;
 
 /*
 |--------------------------------------------------------------------------
-| Registrar Information
+| Upload Directories
 |--------------------------------------------------------------------------
 */
 
-$registrar = [
-    'full_name' => $_SESSION['full_name'] ?? 'Registrar',
-    'photo' => null,
+$uploadBase = '../public/uploads/teachers/';
+$photoDirectory = $uploadBase . 'photos/';
+$educationDirectory = $uploadBase . 'education/';
+$experienceDirectory = $uploadBase . 'experience/';
+$pgdtDirectory = $uploadBase . 'pgdt/';
+
+$directories = [
+    $uploadBase,
+    $photoDirectory,
+    $educationDirectory,
+    $experienceDirectory,
+    $pgdtDirectory
 ];
 
-$stmt = $conn->prepare("
-    SELECT
-        u.full_name,
-        r.photo
-    FROM users u
-    LEFT JOIN registrars r ON r.user_id = u.id
-    WHERE u.id = ?
-    LIMIT 1
-");
-
-if ($stmt) {
-    $stmt->bind_param('i', $registrarId);
-    $stmt->execute();
-
-    $result = $stmt->get_result();
-
-    if ($row = $result->fetch_assoc()) {
-        $registrar = array_merge($registrar, $row);
+foreach ($directories as $directory) {
+    if (!is_dir($directory)) {
+        @mkdir($directory, 0775, true);
     }
-
-    $stmt->close();
 }
 
 /*
 |--------------------------------------------------------------------------
-| Helpers
+| Helper Functions
 |--------------------------------------------------------------------------
 */
 
-function e(?string $value): string
+function e(mixed $value): string
 {
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars(
+        (string) $value,
+        ENT_QUOTES,
+        'UTF-8'
+    );
 }
 
-function uploadErrorMessage(int $errorCode): string
+function oldFileExists(?string $path): bool
 {
-    return match ($errorCode) {
-        UPLOAD_ERR_INI_SIZE,
-        UPLOAD_ERR_FORM_SIZE => 'The uploaded file is too large.',
-        UPLOAD_ERR_PARTIAL => 'The file upload was incomplete.',
-        UPLOAD_ERR_NO_FILE => 'No file was uploaded.',
-        UPLOAD_ERR_NO_TMP_DIR => 'Temporary upload folder is missing.',
-        UPLOAD_ERR_CANT_WRITE => 'The server could not save the uploaded file.',
-        UPLOAD_ERR_EXTENSION => 'The file upload was blocked by a server extension.',
-        default => 'An unknown file upload error occurred.',
-    };
+    if (!$path) {
+        return false;
+    }
+
+    $path = ltrim($path, '/\\');
+
+    $fullPath = dirname(__DIR__) . DIRECTORY_SEPARATOR .
+        str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+
+    return is_file($fullPath);
 }
 
-function saveUploadedFile(
-    array $file,
-    string $directory,
-    string $relativeDirectory,
-    array $allowedMimeTypes,
-    int $maxSize,
-    string $prefix
-): array {
-    if (!isset($file['error']) || is_array($file['error'])) {
-        return [
-            'success' => false,
-            'message' => 'Invalid uploaded file.',
-        ];
-    }
-
-    if ($file['error'] !== UPLOAD_ERR_OK) {
-        return [
-            'success' => false,
-            'message' => uploadErrorMessage((int) $file['error']),
-        ];
-    }
-
-    if ((int) $file['size'] <= 0) {
-        return [
-            'success' => false,
-            'message' => 'The uploaded file is empty.',
-        ];
-    }
-
-    if ((int) $file['size'] > $maxSize) {
-        return [
-            'success' => false,
-            'message' => 'The uploaded file exceeds the allowed size.',
-        ];
-    }
-
-    if (!is_uploaded_file($file['tmp_name'])) {
-        return [
-            'success' => false,
-            'message' => 'Invalid uploaded file.',
-        ];
-    }
-
-    $finfo = new finfo(FILEINFO_MIME_TYPE);
-    $mimeType = $finfo->file($file['tmp_name']);
-
-    if (!isset($allowedMimeTypes[$mimeType])) {
-        return [
-            'success' => false,
-            'message' => 'This file type is not allowed.',
-        ];
-    }
-
-    $extension = $allowedMimeTypes[$mimeType];
-
-    if (!is_dir($directory)) {
-        if (!mkdir($directory, 0755, true) && !is_dir($directory)) {
-            return [
-                'success' => false,
-                'message' => 'Could not create the upload directory.',
-            ];
-        }
-    }
-
-    $fileName =
-        $prefix
-        . '_'
-        . bin2hex(random_bytes(12))
-        . '.'
-        . $extension;
-
-    $destination =
-        rtrim($directory, DIRECTORY_SEPARATOR)
-        . DIRECTORY_SEPARATOR
-        . $fileName;
-
-    if (!move_uploaded_file($file['tmp_name'], $destination)) {
-        return [
-            'success' => false,
-            'message' => 'Could not save the uploaded file.',
-        ];
-    }
-
-    return [
-        'success' => true,
-        'path' =>
-            trim($relativeDirectory, '/')
-            . '/'
-            . $fileName,
-        'absolute_path' => $destination,
-    ];
-}
-
-function deleteStoredFile(?string $relativePath): void
+function deleteTeacherFile(?string $path): void
 {
-    if (!$relativePath) {
+    if (!$path) {
         return;
     }
 
-    $projectRoot = dirname(__DIR__);
+    $path = ltrim($path, '/\\');
 
-    $relativePath = ltrim(
-        str_replace('\\', '/', $relativePath),
-        '/'
-    );
-
-    if (str_starts_with($relativePath, 'public/')) {
-        $fullPath =
-            $projectRoot
-            . '/'
-            . $relativePath;
-    } else {
-        $fullPath =
-            $projectRoot
-            . '/public/'
-            . $relativePath;
-    }
+    $fullPath = dirname(__DIR__) . DIRECTORY_SEPARATOR .
+        str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
 
     if (is_file($fullPath)) {
         @unlink($fullPath);
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Education Levels
-|--------------------------------------------------------------------------
-*/
+function uploadTeacherFile(
+    string $inputName,
+    string $directory,
+    string $databaseDirectory,
+    string $prefix,
+    array $allowedExtensions,
+    int $maxSize = 5242880
+): array {
 
-$educationLevels = [
-    'Certificate',
-    'Diploma',
-    'BSc',
-    'BEd',
-    'Doctor',
-    'PhD',
-];
-
-/*
-|--------------------------------------------------------------------------
-| Marital Statuses
-|--------------------------------------------------------------------------
-*/
-
-$maritalStatuses = [
-    'Single',
-    'Married',
-    'Divorced',
-    'Widowed',
-];
-
-/*
-|--------------------------------------------------------------------------
-| Ethiopian Months
-|--------------------------------------------------------------------------
-*/
-
-$ethiopianMonths = [
-    1 => 'Meskerem / መስከረም',
-    2 => 'Tikimt / ጥቅምት',
-    3 => 'Hidar / ኅዳር',
-    4 => 'Tahsas / ታኅሣሥ',
-    5 => 'Tir / ጥር',
-    6 => 'Yekatit / የካቲት',
-    7 => 'Megabit / መጋቢት',
-    8 => 'Miazia / ሚያዝያ',
-    9 => 'Ginbot / ግንቦት',
-    10 => 'Sene / ሰኔ',
-    11 => 'Hamle / ሐምሌ',
-    12 => 'Nehase / ነሐሴ',
-    13 => 'Pagume / ጳጉሜን',
-];
-
-/*
-|--------------------------------------------------------------------------
-| Search Teachers
-|--------------------------------------------------------------------------
-*/
-
-$search = trim(
-    (string) ($_GET['search'] ?? '')
-);
-
-$teachers = [];
-
-if ($search !== '') {
-
-    $searchLike = '%' . $search . '%';
-
-    $stmt = $conn->prepare("
-        SELECT
-            u.id AS user_id,
-            u.full_name,
-            u.email,
-            u.phone,
-            u.is_deleted,
-            t.id AS teacher_id
-        FROM users u
-        LEFT JOIN teachers t
-            ON t.user_id = u.id
-        WHERE
-            LOWER(u.role) = 'teacher'
-            AND u.is_deleted = 0
-            AND (
-                u.full_name LIKE ?
-                OR u.email LIKE ?
-                OR u.phone LIKE ?
-            )
-        ORDER BY u.full_name ASC
-        LIMIT 30
-    ");
-
-    if ($stmt) {
-
-        $stmt->bind_param(
-            'sss',
-            $searchLike,
-            $searchLike,
-            $searchLike
-        );
-
-        $stmt->execute();
-
-        $result = $stmt->get_result();
-
-        while ($row = $result->fetch_assoc()) {
-            $teachers[] = $row;
-        }
-
-        $stmt->close();
+    if (
+        !isset($_FILES[$inputName]) ||
+        !is_array($_FILES[$inputName])
+    ) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => null
+        ];
     }
+
+    $file = $_FILES[$inputName];
+
+    if (
+        !isset($file['error']) ||
+        $file['error'] === UPLOAD_ERR_NO_FILE
+    ) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => null
+        ];
+    }
+
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => 'There was an error uploading the file.'
+        ];
+    }
+
+    if (
+        !isset($file['tmp_name']) ||
+        !is_uploaded_file($file['tmp_name'])
+    ) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => 'Invalid uploaded file.'
+        ];
+    }
+
+    if ((int) $file['size'] > $maxSize) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => 'File size must not exceed 5 MB.'
+        ];
+    }
+
+    $extension = strtolower(
+        pathinfo(
+            (string) $file['name'],
+            PATHINFO_EXTENSION
+        )
+    );
+
+    if (!in_array($extension, $allowedExtensions, true)) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => 'Invalid file type.'
+        ];
+    }
+
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime = $finfo->file($file['tmp_name']);
+
+    $allowedMimes = [
+        'pdf' => [
+            'application/pdf'
+        ],
+        'jpg' => [
+            'image/jpeg'
+        ],
+        'jpeg' => [
+            'image/jpeg'
+        ],
+        'png' => [
+            'image/png'
+        ],
+        'webp' => [
+            'image/webp'
+        ]
+    ];
+
+    if (
+        !isset($allowedMimes[$extension]) ||
+        !in_array(
+            $mime,
+            $allowedMimes[$extension],
+            true
+        )
+    ) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => 'The uploaded file type is invalid.'
+        ];
+    }
+
+    $safePrefix = preg_replace(
+        '/[^A-Za-z0-9_-]/',
+        '',
+        $prefix
+    );
+
+    $fileName =
+        $safePrefix .
+        '_' .
+        bin2hex(random_bytes(12)) .
+        '.' .
+        $extension;
+
+    $destination =
+        rtrim($directory, '/\\') .
+        DIRECTORY_SEPARATOR .
+        $fileName;
+
+    if (!move_uploaded_file(
+        $file['tmp_name'],
+        $destination
+    )) {
+        return [
+            'uploaded' => false,
+            'path' => null,
+            'error' => 'Unable to save the uploaded file.'
+        ];
+    }
+
+    return [
+        'uploaded' => true,
+        'path' => rtrim($databaseDirectory, '/') .
+            '/' .
+            $fileName,
+        'error' => null
+    ];
 }
 
-/*
-|--------------------------------------------------------------------------
-| Selected Teacher
-|--------------------------------------------------------------------------
-*/
+function getTeacherById(
+    mysqli $conn,
+    int $teacherId
+): ?array {
 
-$selectedUserId = isset($_GET['user_id'])
-    ? (int) $_GET['user_id']
-    : (int) ($_POST['user_id'] ?? 0);
-
-$teacher = null;
-
-if ($selectedUserId > 0) {
-
-    $stmt = $conn->prepare("
+    $sql = "
         SELECT
-            u.id AS user_id,
-            u.full_name,
-            u.email,
-            u.phone,
-            u.role,
-
             t.id AS teacher_id,
+            t.user_id,
+            t.employment_status,
             t.fayda_number,
+            t.photo_path,
             t.gender,
             t.birth_eth_year,
             t.birth_eth_month,
@@ -356,633 +273,482 @@ if ($selectedUserId > 0) {
             t.marital_status,
             t.education_level,
             t.department,
-            t.college_university_institution,
             t.education_credential_path,
             t.has_experience,
             t.experience_file_path,
+            t.college_university_institution,
             t.has_pgdt,
-            t.pgdt_file_path
+            t.pgdt_file_path,
 
+            u.full_name,
+            u.email,
+            u.phone,
+            u.role,
+            u.is_deleted
+
+        FROM teachers t
+
+        INNER JOIN users u
+            ON u.id = t.user_id
+
+        WHERE t.id = ?
+          AND LOWER(u.role) = 'teacher'
+          AND u.is_deleted = 0
+
+        LIMIT 1
+    ";
+
+    $stmt = $conn->prepare($sql);
+
+    if (!$stmt) {
+        throw new RuntimeException(
+            'Failed to prepare teacher query.'
+        );
+    }
+
+    $stmt->bind_param(
+        'i',
+        $teacherId
+    );
+
+    $stmt->execute();
+
+    $result = $stmt->get_result();
+
+    $teacher = $result->fetch_assoc();
+
+    $stmt->close();
+
+    return $teacher ?: null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Load Registrar
+|--------------------------------------------------------------------------
+*/
+
+try {
+
+    $stmt = $conn->prepare("
+        SELECT
+            u.id,
+            u.full_name,
+            u.email,
+            u.phone,
+            r.photo
         FROM users u
-
-        LEFT JOIN teachers t
-            ON t.user_id = u.id
-
-        WHERE
-            u.id = ?
-            AND LOWER(u.role) = 'teacher'
-            AND u.is_deleted = 0
-
+        LEFT JOIN registrars r
+            ON r.user_id = u.id
+        WHERE u.id = ?
+          AND LOWER(u.role) = 'registrar'
         LIMIT 1
     ");
 
-    if ($stmt) {
+    if (!$stmt) {
+        throw new RuntimeException(
+            'Unable to load registrar information.'
+        );
+    }
+
+    $stmt->bind_param(
+        'i',
+        $registrarId
+    );
+
+    $stmt->execute();
+
+    $result = $stmt->get_result();
+
+    $registrar = $result->fetch_assoc();
+
+    $stmt->close();
+
+    if (!$registrar) {
+        session_destroy();
+        header('Location: ../auth/login.php');
+        exit;
+    }
+
+} catch (Throwable $e) {
+
+    $errorMessage = $e->getMessage();
+}
+
+/*
+|--------------------------------------------------------------------------
+| Search Teachers
+|--------------------------------------------------------------------------
+*/
+
+if (
+    $errorMessage === '' &&
+    $search !== ''
+) {
+
+    try {
+
+        $searchValue = '%' . $search . '%';
+
+        $stmt = $conn->prepare("
+            SELECT
+                t.id AS teacher_id,
+                t.user_id,
+                t.employment_status,
+                t.fayda_number,
+                t.department,
+                t.gender,
+                u.full_name,
+                u.email,
+                u.phone
+            FROM teachers t
+            INNER JOIN users u
+                ON u.id = t.user_id
+            WHERE LOWER(u.role) = 'teacher'
+              AND u.is_deleted = 0
+              AND (
+                    u.full_name LIKE ?
+                    OR u.email LIKE ?
+                    OR u.phone LIKE ?
+              )
+            ORDER BY u.full_name ASC
+            LIMIT 50
+        ");
+
+        if (!$stmt) {
+            throw new RuntimeException(
+                'Unable to search teachers.'
+            );
+        }
 
         $stmt->bind_param(
-            'i',
-            $selectedUserId
+            'sss',
+            $searchValue,
+            $searchValue,
+            $searchValue
         );
 
         $stmt->execute();
 
         $result = $stmt->get_result();
 
-        if ($row = $result->fetch_assoc()) {
-            $teacher = $row;
+        while ($row = $result->fetch_assoc()) {
+            $searchResults[] = $row;
         }
 
         $stmt->close();
-    }
 
-    if (!$teacher) {
+    } catch (Throwable $e) {
 
-        $error =
-            'Teacher account was not found.';
-
-        $selectedUserId = 0;
+        $errorMessage = $e->getMessage();
     }
 }
 
 /*
 |--------------------------------------------------------------------------
-| Form Defaults
+| Update Teacher
 |--------------------------------------------------------------------------
 */
 
-$form = [
-    'fayda_number' =>
-        $teacher['fayda_number'] ?? '',
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST' &&
+    isset($_POST['update_teacher'])
+) {
 
-    'gender' =>
-        $teacher['gender'] ?? '',
+    $teacherId = (int) ($_POST['teacher_id'] ?? 0);
 
-    'birth_eth_year' =>
-        $teacher['birth_eth_year'] ?? '',
+    if ($teacherId <= 0) {
 
-    'birth_eth_month' =>
-        $teacher['birth_eth_month'] ?? '',
-
-    'birth_eth_day' =>
-        $teacher['birth_eth_day'] ?? '',
-
-    'region' =>
-        $teacher['region'] ?? '',
-
-    'zone' =>
-        $teacher['zone'] ?? '',
-
-    'woreda' =>
-        $teacher['woreda'] ?? '',
-
-    'marital_status' =>
-        $teacher['marital_status'] ?? '',
-
-    'education_level' =>
-        $teacher['education_level'] ?? '',
-
-    'department' =>
-        $teacher['department'] ?? '',
-
-    'college_university_institution' =>
-        $teacher['college_university_institution'] ?? '',
-
-    'has_experience' =>
-        $teacher['has_experience'] ?? 'No',
-
-    'has_pgdt' =>
-        $teacher['has_pgdt'] ?? 'No',
-];
-
-/*
-|--------------------------------------------------------------------------
-| Save Teacher Information
-|--------------------------------------------------------------------------
-*/
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    $postedToken =
-        (string) ($_POST['csrf_token'] ?? '');
-
-    if (
-        !hash_equals(
-            (string) $_SESSION['csrf_token'],
-            $postedToken
-        )
-    ) {
-
-        $error =
-            'Invalid security token. Please refresh the page and try again.';
+        $errorMessage = 'Invalid teacher selected.';
 
     } else {
 
-        $userId =
-            (int) ($_POST['user_id'] ?? 0);
+        try {
 
-        /*
-        |--------------------------------------------------------------------------
-        | Read Form
-        |--------------------------------------------------------------------------
-        */
+            /*
+            |--------------------------------------------------------------------------
+            | Get Current Teacher
+            |--------------------------------------------------------------------------
+            */
 
-        $form['fayda_number'] =
-            trim(
-                (string) (
-                    $_POST['fayda_number'] ?? ''
-                )
+            $currentTeacher = getTeacherById(
+                $conn,
+                $teacherId
             );
 
-        $form['gender'] =
-            trim(
-                (string) (
-                    $_POST['gender'] ?? ''
-                )
-            );
-
-        $form['birth_eth_year'] =
-            trim(
-                (string) (
-                    $_POST['birth_eth_year'] ?? ''
-                )
-            );
-
-        $form['birth_eth_month'] =
-            trim(
-                (string) (
-                    $_POST['birth_eth_month'] ?? ''
-                )
-            );
-
-        $form['birth_eth_day'] =
-            trim(
-                (string) (
-                    $_POST['birth_eth_day'] ?? ''
-                )
-            );
-
-        $form['region'] =
-            trim(
-                (string) (
-                    $_POST['region'] ?? ''
-                )
-            );
-
-        $form['zone'] =
-            trim(
-                (string) (
-                    $_POST['zone'] ?? ''
-                )
-            );
-
-        $form['woreda'] =
-            trim(
-                (string) (
-                    $_POST['woreda'] ?? ''
-                )
-            );
-
-        $form['marital_status'] =
-            trim(
-                (string) (
-                    $_POST['marital_status'] ?? ''
-                )
-            );
-
-        $form['education_level'] =
-            trim(
-                (string) (
-                    $_POST['education_level'] ?? ''
-                )
-            );
-
-        $form['department'] =
-            trim(
-                (string) (
-                    $_POST['department'] ?? ''
-                )
-            );
-
-        $form['college_university_institution'] =
-            trim(
-                (string) (
-                    $_POST[
-                        'college_university_institution'
-                    ] ?? ''
-                )
-            );
-
-        $form['has_experience'] =
-            trim(
-                (string) (
-                    $_POST['has_experience'] ?? 'No'
-                )
-            );
-
-        $form['has_pgdt'] =
-            trim(
-                (string) (
-                    $_POST['has_pgdt'] ?? 'No'
-                )
-            );
-
-        $errors = [];
-
-        /*
-        |--------------------------------------------------------------------------
-        | Validate Teacher Account
-        |--------------------------------------------------------------------------
-        */
-
-        if ($userId <= 0) {
-
-            $errors[] =
-                'Please select a teacher.';
-        }
-
-        $account = null;
-
-        if ($userId > 0) {
-
-            $stmt = $conn->prepare("
-                SELECT
-                    id,
-                    role,
-                    is_deleted
-                FROM users
-                WHERE id = ?
-                LIMIT 1
-            ");
-
-            if ($stmt) {
-
-                $stmt->bind_param(
-                    'i',
-                    $userId
+            if (!$currentTeacher) {
+                throw new RuntimeException(
+                    'Teacher not found.'
                 );
-
-                $stmt->execute();
-
-                $result =
-                    $stmt->get_result();
-
-                $account =
-                    $result->fetch_assoc();
-
-                $stmt->close();
             }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Editable Teacher Fields
+            |--------------------------------------------------------------------------
+            */
+
+            $employmentStatus = trim(
+                (string) ($_POST['employment_status'] ?? 'Active')
+            );
+
+            $faydaNumber = trim(
+                (string) ($_POST['fayda_number'] ?? '')
+            );
+
+            $gender = trim(
+                (string) ($_POST['gender'] ?? '')
+            );
+
+            $birthEthYear = trim(
+                (string) ($_POST['birth_eth_year'] ?? '')
+            );
+
+            $birthEthMonth = trim(
+                (string) ($_POST['birth_eth_month'] ?? '')
+            );
+
+            $birthEthDay = trim(
+                (string) ($_POST['birth_eth_day'] ?? '')
+            );
+
+            $region = trim(
+                (string) ($_POST['region'] ?? '')
+            );
+
+            $zone = trim(
+                (string) ($_POST['zone'] ?? '')
+            );
+
+            $woreda = trim(
+                (string) ($_POST['woreda'] ?? '')
+            );
+
+            $maritalStatus = trim(
+                (string) ($_POST['marital_status'] ?? '')
+            );
+
+            $educationLevel = trim(
+                (string) ($_POST['education_level'] ?? '')
+            );
+
+            $department = trim(
+                (string) ($_POST['department'] ?? '')
+            );
+
+            $collegeUniversity = trim(
+                (string) (
+                    $_POST['college_university_institution']
+                    ?? ''
+                )
+            );
+
+            $hasExperience = trim(
+                (string) (
+                    $_POST['has_experience']
+                    ?? 'No'
+                )
+            );
+
+            $hasPgdt = trim(
+                (string) (
+                    $_POST['has_pgdt']
+                    ?? 'No'
+                )
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Validation
+            |--------------------------------------------------------------------------
+            */
 
             if (
-                !$account ||
-                strtolower(
-                    (string) $account['role']
-                ) !== 'teacher' ||
-                (int) $account['is_deleted'] === 1
+                !in_array(
+                    $employmentStatus,
+                    ['Active', 'Withdrawn'],
+                    true
+                )
             ) {
-
-                $errors[] =
-                    'The selected account is not an active teacher account.';
-            }
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Fayda Number
-        |--------------------------------------------------------------------------
-        */
-
-        if ($form['fayda_number'] === '') {
-
-            $errors[] =
-                'Fayda Number is required.';
-
-        } elseif (
-            !preg_match(
-                '/^[0-9]{16}$/',
-                $form['fayda_number']
-            )
-        ) {
-
-            $errors[] =
-                'Fayda Number must contain exactly 16 digits.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Gender
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            $form['gender'] !== '' &&
-            !in_array(
-                $form['gender'],
-                ['Male', 'Female'],
-                true
-            )
-        ) {
-
-            $errors[] =
-                'Invalid gender selected.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Ethiopian Birth Date
-        |--------------------------------------------------------------------------
-        */
-
-        $birthYear = null;
-        $birthMonth = null;
-        $birthDay = null;
-
-        if (
-            $form['birth_eth_year'] !== '' ||
-            $form['birth_eth_month'] !== '' ||
-            $form['birth_eth_day'] !== ''
-        ) {
-
-            if (
-                !ctype_digit(
-                    $form['birth_eth_year']
-                ) ||
-                (int) $form['birth_eth_year'] < 1900 ||
-                (int) $form['birth_eth_year'] > 2200
-            ) {
-
-                $errors[] =
-                    'Enter a valid Ethiopian birth year.';
-
-            } else {
-
-                $birthYear =
-                    (int) $form['birth_eth_year'];
-            }
-
-            if (
-                !ctype_digit(
-                    $form['birth_eth_month']
-                ) ||
-                (int) $form['birth_eth_month'] < 1 ||
-                (int) $form['birth_eth_month'] > 13
-            ) {
-
-                $errors[] =
-                    'Select a valid Ethiopian birth month.';
-
-            } else {
-
-                $birthMonth =
-                    (int) $form['birth_eth_month'];
-            }
-
-            if (
-                !ctype_digit(
-                    $form['birth_eth_day']
-                ) ||
-                (int) $form['birth_eth_day'] < 1
-            ) {
-
-                $errors[] =
-                    'Select a valid Ethiopian birth day.';
-
-            } else {
-
-                $birthDay =
-                    (int) $form['birth_eth_day'];
-
-                if ($birthMonth === 13) {
-
-                    if ($birthDay > 6) {
-
-                        $errors[] =
-                            'Pagume can have a maximum of 6 days.';
-                    }
-
-                } elseif ($birthDay > 30) {
-
-                    $errors[] =
-                        'Ethiopian months can have a maximum of 30 days.';
-                }
-            }
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Marital Status
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            $form['marital_status'] !== '' &&
-            !in_array(
-                $form['marital_status'],
-                $maritalStatuses,
-                true
-            )
-        ) {
-
-            $errors[] =
-                'Invalid marital status selected.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Education
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            $form['education_level'] === '' ||
-            !in_array(
-                $form['education_level'],
-                $educationLevels,
-                true
-            )
-        ) {
-
-            $errors[] =
-                'Please select an education level.';
-        }
-
-        if (
-            $form['college_university_institution'] === ''
-        ) {
-
-            $errors[] =
-                'Institution is required.';
-        }
-
-        if ($form['department'] === '') {
-
-            $errors[] =
-                'Department is required.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Experience
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            !in_array(
-                $form['has_experience'],
-                ['Yes', 'No'],
-                true
-            )
-        ) {
-
-            $errors[] =
-                'Invalid experience selection.';
-        }
-
-        if (
-            $form['has_experience'] === 'Yes' &&
-            (
-                !isset(
-                    $_FILES['experience_file']
-                ) ||
-                $_FILES['experience_file']['error']
-                    === UPLOAD_ERR_NO_FILE
-            ) &&
-            empty(
-                $teacher['experience_file_path']
-            )
-        ) {
-
-            $errors[] =
-                'Experience document is required when the teacher has experience.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | PGDT
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            !in_array(
-                $form['has_pgdt'],
-                ['Yes', 'No'],
-                true
-            )
-        ) {
-
-            $errors[] =
-                'Invalid PGDT selection.';
-        }
-
-        if (
-            $form['has_pgdt'] === 'Yes' &&
-            (
-                !isset(
-                    $_FILES['pgdt_file']
-                ) ||
-                $_FILES['pgdt_file']['error']
-                    === UPLOAD_ERR_NO_FILE
-            ) &&
-            empty(
-                $teacher['pgdt_file_path']
-            )
-        ) {
-
-            $errors[] =
-                'PGDT document is required when the teacher has PGDT.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Education Credential
-        |--------------------------------------------------------------------------
-        */
-
-        if (
-            (
-                !isset(
-                    $_FILES['education_credential']
-                ) ||
-                $_FILES['education_credential']['error']
-                    === UPLOAD_ERR_NO_FILE
-            ) &&
-            empty(
-                $teacher['education_credential_path']
-            )
-        ) {
-
-            $errors[] =
-                'Education credential document is required.';
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Duplicate Fayda Number
-        |--------------------------------------------------------------------------
-        */
-
-        if (empty($errors)) {
-
-            $stmt = $conn->prepare("
-                SELECT id
-                FROM teachers
-                WHERE
-                    fayda_number = ?
-                    AND user_id <> ?
-                LIMIT 1
-            ");
-
-            if ($stmt) {
-
-                $stmt->bind_param(
-                    'si',
-                    $form['fayda_number'],
-                    $userId
+                throw new RuntimeException(
+                    'Invalid employment status.'
                 );
+            }
 
-                $stmt->execute();
+            if (
+                $faydaNumber === '' ||
+                strlen($faydaNumber) > 16
+            ) {
+                throw new RuntimeException(
+                    'Fayda number is required and must not exceed 16 characters.'
+                );
+            }
 
-                $result =
-                    $stmt->get_result();
+            if (
+                !in_array(
+                    $gender,
+                    ['', 'Male', 'Female'],
+                    true
+                )
+            ) {
+                throw new RuntimeException(
+                    'Invalid gender.'
+                );
+            }
 
-                if ($result->fetch_assoc()) {
+            if (
+                !in_array(
+                    $maritalStatus,
+                    [
+                        '',
+                        'Single',
+                        'Married',
+                        'Divorced',
+                        'Widowed'
+                    ],
+                    true
+                )
+            ) {
+                throw new RuntimeException(
+                    'Invalid marital status.'
+                );
+            }
 
-                    $errors[] =
-                        'This Fayda Number is already registered to another teacher.';
+            if (
+                !in_array(
+                    $hasExperience,
+                    ['Yes', 'No'],
+                    true
+                )
+            ) {
+                throw new RuntimeException(
+                    'Invalid experience selection.'
+                );
+            }
+
+            if (
+                !in_array(
+                    $hasPgdt,
+                    ['Yes', 'No'],
+                    true
+                )
+            ) {
+                throw new RuntimeException(
+                    'Invalid PGDT selection.'
+                );
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Ethiopian Birth Date
+            |--------------------------------------------------------------------------
+            */
+
+            $birthYear = null;
+            $birthMonth = null;
+            $birthDay = null;
+
+            if ($birthEthYear !== '') {
+
+                if (
+                    !ctype_digit($birthEthYear) ||
+                    (int) $birthEthYear < 1900 ||
+                    (int) $birthEthYear > 2100
+                ) {
+                    throw new RuntimeException(
+                        'Invalid Ethiopian birth year.'
+                    );
                 }
 
-                $stmt->close();
+                $birthYear = (int) $birthEthYear;
             }
-        }
 
-        /*
-        |--------------------------------------------------------------------------
-        | File Uploads
-        |--------------------------------------------------------------------------
-        */
+            if ($birthEthMonth !== '') {
 
-        $newEducationFile = null;
-        $newExperienceFile = null;
-        $newPgdtFile = null;
+                if (
+                    !ctype_digit($birthEthMonth) ||
+                    (int) $birthEthMonth < 1 ||
+                    (int) $birthEthMonth > 13
+                ) {
+                    throw new RuntimeException(
+                        'Birth month must be between 1 and 13.'
+                    );
+                }
 
-        if (empty($errors)) {
+                $birthMonth = (int) $birthEthMonth;
+            }
 
-            $educationDirectory =
-                dirname(__DIR__)
-                . '/public/uploads/teachers/education';
+            if ($birthEthDay !== '') {
 
-            $experienceDirectory =
-                dirname(__DIR__)
-                . '/public/uploads/teachers/experience';
+                if (
+                    !ctype_digit($birthEthDay) ||
+                    (int) $birthEthDay < 1 ||
+                    (int) $birthEthDay > 30
+                ) {
+                    throw new RuntimeException(
+                        'Birth day must be between 1 and 30.'
+                    );
+                }
 
-            $pgdtDirectory =
-                dirname(__DIR__)
-                . '/public/uploads/teachers/pgdt';
+                $birthDay = (int) $birthEthDay;
+            }
 
-            $allowedFiles = [
-                'application/pdf' => 'pdf',
-                'image/jpeg' => 'jpg',
-                'image/png' => 'png',
-                'image/webp' => 'webp',
-            ];
+            /*
+            |--------------------------------------------------------------------------
+            | Existing Files
+            |--------------------------------------------------------------------------
+            */
+
+            $oldPhotoPath =
+                $currentTeacher['photo_path'] ?? null;
+
+            $oldEducationPath =
+                $currentTeacher['education_credential_path']
+                ?? null;
+
+            $oldExperiencePath =
+                $currentTeacher['experience_file_path']
+                ?? null;
+
+            $oldPgdtPath =
+                $currentTeacher['pgdt_file_path']
+                ?? null;
+
+            $photoPath = $oldPhotoPath;
+            $educationPath = $oldEducationPath;
+            $experiencePath = $oldExperiencePath;
+            $pgdtPath = $oldPgdtPath;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Upload Teacher Photo
+            |--------------------------------------------------------------------------
+            */
+
+            $photoUpload = uploadTeacherFile(
+                'teacher_photo',
+                $photoDirectory,
+                'public/uploads/teachers/photos',
+                'teacher_' . $teacherId,
+                [
+                    'jpg',
+                    'jpeg',
+                    'png',
+                    'webp'
+                ]
+            );
+
+            if ($photoUpload['error']) {
+                throw new RuntimeException(
+                    $photoUpload['error']
+                );
+            }
+
+            if ($photoUpload['uploaded']) {
+
+                $photoPath = $photoUpload['path'];
+
+            }
 
             /*
             |--------------------------------------------------------------------------
@@ -990,556 +756,354 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             |--------------------------------------------------------------------------
             */
 
-            if (
-                isset(
-                    $_FILES['education_credential']
-                ) &&
-                $_FILES['education_credential']['error']
-                    !== UPLOAD_ERR_NO_FILE
-            ) {
+            $educationUpload = uploadTeacherFile(
+                'education_credential_file',
+                $educationDirectory,
+                'public/uploads/teachers/education',
+                'education_' . $teacherId,
+                [
+                    'pdf',
+                    'jpg',
+                    'jpeg',
+                    'png',
+                    'webp'
+                ]
+            );
 
-                $newEducationFile =
-                    saveUploadedFile(
-                        $_FILES['education_credential'],
-                        $educationDirectory,
-                        'uploads/teachers/education',
-                        $allowedFiles,
-                        10 * 1024 * 1024,
-                        'education_' . $userId
-                    );
+            if ($educationUpload['error']) {
+                throw new RuntimeException(
+                    $educationUpload['error']
+                );
+            }
 
-                if (
-                    !$newEducationFile['success']
-                ) {
+            if ($educationUpload['uploaded']) {
 
-                    $errors[] =
-                        'Education credential: '
-                        . $newEducationFile['message'];
-                }
+                $educationPath =
+                    $educationUpload['path'];
             }
 
             /*
             |--------------------------------------------------------------------------
-            | Experience Document
+            | Experience
             |--------------------------------------------------------------------------
             */
 
-            if (
-                empty($errors) &&
-                $form['has_experience'] === 'Yes' &&
-                isset(
-                    $_FILES['experience_file']
-                ) &&
-                $_FILES['experience_file']['error']
-                    !== UPLOAD_ERR_NO_FILE
-            ) {
+            if ($hasExperience === 'Yes') {
 
-                $newExperienceFile =
-                    saveUploadedFile(
-                        $_FILES['experience_file'],
-                        $experienceDirectory,
-                        'uploads/teachers/experience',
-                        $allowedFiles,
-                        10 * 1024 * 1024,
-                        'experience_' . $userId
-                    );
+                $experienceUpload = uploadTeacherFile(
+                    'experience_file',
+                    $experienceDirectory,
+                    'public/uploads/teachers/experience',
+                    'experience_' . $teacherId,
+                    [
+                        'pdf',
+                        'jpg',
+                        'jpeg',
+                        'png',
+                        'webp'
+                    ]
+                );
 
-                if (
-                    !$newExperienceFile['success']
-                ) {
-
-                    $errors[] =
-                        'Experience document: '
-                        . $newExperienceFile['message'];
-                }
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | PGDT Document
-            |--------------------------------------------------------------------------
-            */
-
-            if (
-                empty($errors) &&
-                $form['has_pgdt'] === 'Yes' &&
-                isset(
-                    $_FILES['pgdt_file']
-                ) &&
-                $_FILES['pgdt_file']['error']
-                    !== UPLOAD_ERR_NO_FILE
-            ) {
-
-                $newPgdtFile =
-                    saveUploadedFile(
-                        $_FILES['pgdt_file'],
-                        $pgdtDirectory,
-                        'uploads/teachers/pgdt',
-                        $allowedFiles,
-                        10 * 1024 * 1024,
-                        'pgdt_' . $userId
-                    );
-
-                if (
-                    !$newPgdtFile['success']
-                ) {
-
-                    $errors[] =
-                        'PGDT document: '
-                        . $newPgdtFile['message'];
-                }
-            }
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Save Database
-        |--------------------------------------------------------------------------
-        */
-
-        if (empty($errors)) {
-
-            $oldEducationFile =
-                $teacher['education_credential_path']
-                ?? null;
-
-            $oldExperienceFile =
-                $teacher['experience_file_path']
-                ?? null;
-
-            $oldPgdtFile =
-                $teacher['pgdt_file_path']
-                ?? null;
-
-            $educationPath =
-                $newEducationFile['path']
-                ?? $oldEducationFile;
-
-            $experiencePath =
-                $form['has_experience'] === 'Yes'
-                    ? (
-                        $newExperienceFile['path']
-                        ?? $oldExperienceFile
-                    )
-                    : null;
-
-            $pgdtPath =
-                $form['has_pgdt'] === 'Yes'
-                    ? (
-                        $newPgdtFile['path']
-                        ?? $oldPgdtFile
-                    )
-                    : null;
-
-            try {
-
-                $conn->begin_transaction();
-
-                /*
-                |--------------------------------------------------------------------------
-                | Check Teacher Record
-                |--------------------------------------------------------------------------
-                */
-
-                $teacherExists = false;
-
-                $stmt = $conn->prepare("
-                    SELECT id
-                    FROM teachers
-                    WHERE user_id = ?
-                    LIMIT 1
-                ");
-
-                if (!$stmt) {
-
+                if ($experienceUpload['error']) {
                     throw new RuntimeException(
-                        'Could not prepare teacher lookup.'
+                        $experienceUpload['error']
                     );
                 }
 
-                $stmt->bind_param(
-                    'i',
-                    $userId
-                );
+                if ($experienceUpload['uploaded']) {
 
-                $stmt->execute();
-
-                $result =
-                    $stmt->get_result();
-
-                if ($result->fetch_assoc()) {
-                    $teacherExists = true;
+                    $experiencePath =
+                        $experienceUpload['path'];
                 }
 
-                $stmt->close();
+            } else {
 
-                /*
-                |--------------------------------------------------------------------------
-                | Update Existing Teacher
-                |--------------------------------------------------------------------------
-                */
-
-                if ($teacherExists) {
-
-                    $stmt = $conn->prepare("
-                        UPDATE teachers
-                        SET
-                            fayda_number = ?,
-                            gender = NULLIF(?, ''),
-                            birth_eth_year = ?,
-                            birth_eth_month = ?,
-                            birth_eth_day = ?,
-                            region = NULLIF(?, ''),
-                            zone = NULLIF(?, ''),
-                            woreda = NULLIF(?, ''),
-                            marital_status = NULLIF(?, ''),
-                            education_level = ?,
-                            department = ?,
-                            college_university_institution = ?,
-                            education_credential_path = ?,
-                            has_experience = ?,
-                            experience_file_path = ?,
-                            has_pgdt = ?,
-                            pgdt_file_path = ?,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE user_id = ?
-                    ");
-
-                    if (!$stmt) {
-
-                        throw new RuntimeException(
-                            'Could not prepare teacher update.'
-                        );
-                    }
-
-                    $stmt->bind_param(
-                        'ssiiissssssssssssi',
-                        $form['fayda_number'],
-                        $form['gender'],
-                        $birthYear,
-                        $birthMonth,
-                        $birthDay,
-                        $form['region'],
-                        $form['zone'],
-                        $form['woreda'],
-                        $form['marital_status'],
-                        $form['education_level'],
-                        $form['department'],
-                        $form['college_university_institution'],
-                        $educationPath,
-                        $form['has_experience'],
-                        $experiencePath,
-                        $form['has_pgdt'],
-                        $pgdtPath,
-                        $userId
-                    );
-
-                    if (!$stmt->execute()) {
-
-                        throw new RuntimeException(
-                            'Could not update teacher information.'
-                        );
-                    }
-
-                    $stmt->close();
-
-                } else {
-
-                    /*
-                    |--------------------------------------------------------------------------
-                    | Create Teacher Record
-                    |--------------------------------------------------------------------------
-                    */
-
-                    $stmt = $conn->prepare("
-                        INSERT INTO teachers (
-                            user_id,
-                            fayda_number,
-                            gender,
-                            birth_eth_year,
-                            birth_eth_month,
-                            birth_eth_day,
-                            region,
-                            zone,
-                            woreda,
-                            marital_status,
-                            education_level,
-                            department,
-                            college_university_institution,
-                            education_credential_path,
-                            has_experience,
-                            experience_file_path,
-                            has_pgdt,
-                            pgdt_file_path
-                        )
-                        VALUES (
-                            ?,
-                            ?,
-                            NULLIF(?, ''),
-                            ?,
-                            ?,
-                            ?,
-                            NULLIF(?, ''),
-                            NULLIF(?, ''),
-                            NULLIF(?, ''),
-                            NULLIF(?, ''),
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            ?
-                        )
-                    ");
-
-                    if (!$stmt) {
-
-                        throw new RuntimeException(
-                            'Could not prepare teacher creation.'
-                        );
-                    }
-
-                    $stmt->bind_param(
-                        'issiiissssssssssss',
-                        $userId,
-                        $form['fayda_number'],
-                        $form['gender'],
-                        $birthYear,
-                        $birthMonth,
-                        $birthDay,
-                        $form['region'],
-                        $form['zone'],
-                        $form['woreda'],
-                        $form['marital_status'],
-                        $form['education_level'],
-                        $form['department'],
-                        $form['college_university_institution'],
-                        $educationPath,
-                        $form['has_experience'],
-                        $experiencePath,
-                        $form['has_pgdt'],
-                        $pgdtPath
-                    );
-
-                    if (!$stmt->execute()) {
-
-                        throw new RuntimeException(
-                            'Could not create teacher information.'
-                        );
-                    }
-
-                    $stmt->close();
-                }
-
-                $conn->commit();
-
-                /*
-                |--------------------------------------------------------------------------
-                | Delete Replaced Education File
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    $newEducationFile &&
-                    $newEducationFile['success'] &&
-                    $oldEducationFile &&
-                    $oldEducationFile !== $educationPath
-                ) {
-
-                    deleteStoredFile(
-                        $oldEducationFile
-                    );
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | Delete Replaced Experience File
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    $newExperienceFile &&
-                    $newExperienceFile['success'] &&
-                    $oldExperienceFile &&
-                    $oldExperienceFile !== $experiencePath
-                ) {
-
-                    deleteStoredFile(
-                        $oldExperienceFile
-                    );
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | Delete Replaced PGDT File
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    $newPgdtFile &&
-                    $newPgdtFile['success'] &&
-                    $oldPgdtFile &&
-                    $oldPgdtFile !== $pgdtPath
-                ) {
-
-                    deleteStoredFile(
-                        $oldPgdtFile
-                    );
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | Delete Experience File If Changed To No
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    $form['has_experience'] === 'No' &&
-                    $oldExperienceFile
-                ) {
-
-                    deleteStoredFile(
-                        $oldExperienceFile
-                    );
-                }
-
-                /*
-                |--------------------------------------------------------------------------
-                | Delete PGDT File If Changed To No
-                |--------------------------------------------------------------------------
-                */
-
-                if (
-                    $form['has_pgdt'] === 'No' &&
-                    $oldPgdtFile
-                ) {
-
-                    deleteStoredFile(
-                        $oldPgdtFile
-                    );
-                }
-
-                $_SESSION['success'] =
-                    'Teacher information saved successfully.';
-
-                header(
-                    'Location: update-teacher.php?user_id='
-                    . $userId
-                );
-
-                exit;
-
-            } catch (Throwable $exception) {
-
-                $conn->rollback();
-
-                if (
-                    $newEducationFile &&
-                    $newEducationFile['success']
-                ) {
-
-                    deleteStoredFile(
-                        $newEducationFile['path']
-                    );
-                }
-
-                if (
-                    $newExperienceFile &&
-                    $newExperienceFile['success']
-                ) {
-
-                    deleteStoredFile(
-                        $newExperienceFile['path']
-                    );
-                }
-
-                if (
-                    $newPgdtFile &&
-                    $newPgdtFile['success']
-                ) {
-
-                    deleteStoredFile(
-                        $newPgdtFile['path']
-                    );
-                }
-
-                $error =
-                    'Unable to save teacher information. Please try again.';
+                $experiencePath = null;
             }
 
-        } else {
+            /*
+            |--------------------------------------------------------------------------
+            | PGDT
+            |--------------------------------------------------------------------------
+            */
 
-            $error =
-                implode(' ', $errors);
-        }
+            if ($hasPgdt === 'Yes') {
 
-        /*
-        |--------------------------------------------------------------------------
-        | Reload Teacher After POST
-        |--------------------------------------------------------------------------
-        */
+                $pgdtUpload = uploadTeacherFile(
+                    'pgdt_file',
+                    $pgdtDirectory,
+                    'public/uploads/teachers/pgdt',
+                    'pgdt_' . $teacherId,
+                    [
+                        'pdf',
+                        'jpg',
+                        'jpeg',
+                        'png',
+                        'webp'
+                    ]
+                );
 
-        if ($userId > 0) {
+                if ($pgdtUpload['error']) {
+                    throw new RuntimeException(
+                        $pgdtUpload['error']
+                    );
+                }
 
-            $selectedUserId =
-                $userId;
+                if ($pgdtUpload['uploaded']) {
+
+                    $pgdtPath =
+                        $pgdtUpload['path'];
+                }
+
+            } else {
+
+                $pgdtPath = null;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Start Transaction
+            |--------------------------------------------------------------------------
+            */
+
+            $conn->begin_transaction();
+            $transactionStarted = true;
+
+            /*
+            |--------------------------------------------------------------------------
+            | IMPORTANT:
+            |
+            | ONLY teachers table is updated.
+            |
+            | users table is NOT touched.
+            |--------------------------------------------------------------------------
+            */
 
             $stmt = $conn->prepare("
-                SELECT
-                    u.id AS user_id,
-                    u.full_name,
-                    u.email,
-                    u.phone,
-                    u.role,
-
-                    t.id AS teacher_id,
-                    t.fayda_number,
-                    t.gender,
-                    t.birth_eth_year,
-                    t.birth_eth_month,
-                    t.birth_eth_day,
-                    t.region,
-                    t.zone,
-                    t.woreda,
-                    t.marital_status,
-                    t.education_level,
-                    t.department,
-                    t.college_university_institution,
-                    t.education_credential_path,
-                    t.has_experience,
-                    t.experience_file_path,
-                    t.has_pgdt,
-                    t.pgdt_file_path
-
-                FROM users u
-
-                LEFT JOIN teachers t
-                    ON t.user_id = u.id
-
-                WHERE u.id = ?
-
+                UPDATE teachers
+                SET
+                    employment_status = ?,
+                    fayda_number = ?,
+                    photo_path = NULLIF(?, ''),
+                    gender = NULLIF(?, ''),
+                    birth_eth_year = ?,
+                    birth_eth_month = ?,
+                    birth_eth_day = ?,
+                    region = NULLIF(?, ''),
+                    zone = NULLIF(?, ''),
+                    woreda = NULLIF(?, ''),
+                    marital_status = NULLIF(?, ''),
+                    education_level = NULLIF(?, ''),
+                    department = NULLIF(?, ''),
+                    education_credential_path = NULLIF(?, ''),
+                    has_experience = ?,
+                    experience_file_path = NULLIF(?, ''),
+                    college_university_institution = NULLIF(?, ''),
+                    has_pgdt = ?,
+                    pgdt_file_path = NULLIF(?, '')
+                WHERE id = ?
                 LIMIT 1
             ");
 
-            if ($stmt) {
-
-                $stmt->bind_param(
-                    'i',
-                    $userId
+            if (!$stmt) {
+                throw new RuntimeException(
+                    'Failed to prepare teacher update.'
                 );
+            }
 
-                $stmt->execute();
+            /*
+            |--------------------------------------------------------------------------
+            | Use strings for nullable fields.
+            | MySQL safely converts numeric birth fields.
+            |--------------------------------------------------------------------------
+            */
 
-                $result =
-                    $stmt->get_result();
+            $birthYearString =
+                $birthYear === null
+                    ? ''
+                    : (string) $birthYear;
 
-                if ($row = $result->fetch_assoc()) {
-                    $teacher = $row;
-                }
+            $birthMonthString =
+                $birthMonth === null
+                    ? ''
+                    : (string) $birthMonth;
 
-                $stmt->close();
+            $birthDayString =
+                $birthDay === null
+                    ? ''
+                    : (string) $birthDay;
+
+            $photoPathValue =
+                $photoPath ?? '';
+
+            $educationPathValue =
+                $educationPath ?? '';
+
+            $experiencePathValue =
+                $experiencePath ?? '';
+
+            $pgdtPathValue =
+                $pgdtPath ?? '';
+
+            $stmt->bind_param(
+                'sssssssssssssssssssi',
+                $employmentStatus,
+                $faydaNumber,
+                $photoPathValue,
+                $gender,
+                $birthYearString,
+                $birthMonthString,
+                $birthDayString,
+                $region,
+                $zone,
+                $woreda,
+                $maritalStatus,
+                $educationLevel,
+                $department,
+                $educationPathValue,
+                $hasExperience,
+                $experiencePathValue,
+                $collegeUniversity,
+                $hasPgdt,
+                $pgdtPathValue,
+                $teacherId
+            );
+
+            if (!$stmt->execute()) {
+                throw new RuntimeException(
+                    'Teacher information could not be updated.'
+                );
+            }
+
+            $stmt->close();
+
+            $conn->commit();
+            $transactionStarted = false;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Delete old files AFTER successful DB update
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                $photoUpload['uploaded'] &&
+                $oldPhotoPath &&
+                $oldPhotoPath !== $photoPath
+            ) {
+                deleteTeacherFile($oldPhotoPath);
+            }
+
+            if (
+                $educationUpload['uploaded'] &&
+                $oldEducationPath &&
+                $oldEducationPath !== $educationPath
+            ) {
+                deleteTeacherFile($oldEducationPath);
+            }
+
+            if (
+                $hasExperience === 'No' &&
+                $oldExperiencePath
+            ) {
+                deleteTeacherFile($oldExperiencePath);
+            }
+
+            if (
+                $hasExperience === 'Yes' &&
+                $experienceUpload['uploaded'] &&
+                $oldExperiencePath &&
+                $oldExperiencePath !== $experiencePath
+            ) {
+                deleteTeacherFile($oldExperiencePath);
+            }
+
+            if (
+                $hasPgdt === 'No' &&
+                $oldPgdtPath
+            ) {
+                deleteTeacherFile($oldPgdtPath);
+            }
+
+            if (
+                $hasPgdt === 'Yes' &&
+                $pgdtUpload['uploaded'] &&
+                $oldPgdtPath &&
+                $oldPgdtPath !== $pgdtPath
+            ) {
+                deleteTeacherFile($oldPgdtPath);
+            }
+
+            $successMessage =
+                'Teacher information updated successfully.';
+
+            $teacher = getTeacherById(
+                $conn,
+                $teacherId
+            );
+
+        } catch (Throwable $e) {
+
+            if ($transactionStarted) {
+                $conn->rollback();
+                $transactionStarted = false;
+            }
+
+            $errorMessage = $e->getMessage();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Remove newly uploaded files if database update failed
+            |--------------------------------------------------------------------------
+            */
+
+            if (
+                isset($photoUpload) &&
+                $photoUpload['uploaded'] &&
+                isset($photoUpload['path'])
+            ) {
+                deleteTeacherFile(
+                    $photoUpload['path']
+                );
+            }
+
+            if (
+                isset($educationUpload) &&
+                $educationUpload['uploaded'] &&
+                isset($educationUpload['path'])
+            ) {
+                deleteTeacherFile(
+                    $educationUpload['path']
+                );
+            }
+
+            if (
+                isset($experienceUpload) &&
+                $experienceUpload['uploaded'] &&
+                isset($experienceUpload['path'])
+            ) {
+                deleteTeacherFile(
+                    $experienceUpload['path']
+                );
+            }
+
+            if (
+                isset($pgdtUpload) &&
+                $pgdtUpload['uploaded'] &&
+                isset($pgdtUpload['path'])
+            ) {
+                deleteTeacherFile(
+                    $pgdtUpload['path']
+                );
+            }
+
+            try {
+                $teacher = getTeacherById(
+                    $conn,
+                    $teacherId
+                );
+            } catch (Throwable $ignored) {
+                $teacher = null;
             }
         }
     }
@@ -1547,18 +1111,129 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 /*
 |--------------------------------------------------------------------------
-| Maximum Ethiopian Birth Days
+| Load Teacher When Selected Through GET
 |--------------------------------------------------------------------------
 */
 
-$maxDays =
-    (
-        (int) (
-            $form['birth_eth_month'] ?? 0
-        ) === 13
-    )
-        ? 6
-        : 30;
+if (
+    $teacher === null &&
+    $teacherId > 0 &&
+    $errorMessage === ''
+) {
+
+    try {
+
+        $teacher = getTeacherById(
+            $conn,
+            $teacherId
+        );
+
+        if (!$teacher) {
+            $errorMessage = 'Teacher not found.';
+            $teacherId = 0;
+        }
+
+    } catch (Throwable $e) {
+
+        $errorMessage = $e->getMessage();
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Registrar Photo
+|--------------------------------------------------------------------------
+*/
+
+$registrarPhoto =
+    '../public/images/default-avatar.png';
+
+if (!empty($registrar['photo'])) {
+
+    $candidate =
+        '../' .
+        ltrim(
+            (string) $registrar['photo'],
+            '/\\'
+        );
+
+    if (is_file($candidate)) {
+        $registrarPhoto = $candidate;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Teacher Files
+|--------------------------------------------------------------------------
+*/
+
+$teacherPhotoUrl = '';
+
+$educationFileUrl = '';
+
+$experienceFileUrl = '';
+
+$pgdtFileUrl = '';
+
+if ($teacher) {
+
+    if (!empty($teacher['photo_path'])) {
+
+        $candidate =
+            '../' .
+            ltrim(
+                (string) $teacher['photo_path'],
+                '/\\'
+            );
+
+        if (is_file($candidate)) {
+            $teacherPhotoUrl = $candidate;
+        }
+    }
+
+    if (!empty($teacher['education_credential_path'])) {
+
+        $candidate =
+            '../' .
+            ltrim(
+                (string) $teacher['education_credential_path'],
+                '/\\'
+            );
+
+        if (is_file($candidate)) {
+            $educationFileUrl = $candidate;
+        }
+    }
+
+    if (!empty($teacher['experience_file_path'])) {
+
+        $candidate =
+            '../' .
+            ltrim(
+                (string) $teacher['experience_file_path'],
+                '/\\'
+            );
+
+        if (is_file($candidate)) {
+            $experienceFileUrl = $candidate;
+        }
+    }
+
+    if (!empty($teacher['pgdt_file_path'])) {
+
+        $candidate =
+            '../' .
+            ltrim(
+                (string) $teacher['pgdt_file_path'],
+                '/\\'
+            );
+
+        if (is_file($candidate)) {
+            $pgdtFileUrl = $candidate;
+        }
+    }
+}
 
 ?>
 <!DOCTYPE html>
@@ -1573,14 +1248,17 @@ $maxDays =
         content="width=device-width, initial-scale=1.0"
     >
 
-    <title>
-        Update Teacher | Registrar
-    </title>
+    <meta
+        name="description"
+        content="BKHS Registrar - Update Teacher"
+    >
+
+    <title>Update Teacher | BKHS Registrar</title>
 
     <link
         rel="icon"
         type="image/webp"
-        href="../public/image/logo.webp?v=1"
+        href="../public/image/logo.webp"
     >
 
     <link
@@ -1594,11 +1272,25 @@ $maxDays =
     >
 
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
         rel="stylesheet"
     >
 
     <style>
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --sidebar: #111827;
+            --sidebar-hover: #1f2937;
+            --background: #f5f7fb;
+            --card: #ffffff;
+            --text: #111827;
+            --muted: #6b7280;
+            --border: #e5e7eb;
+            --success: #16a34a;
+            --danger: #dc2626;
+        }
 
         * {
             box-sizing: border-box;
@@ -1607,8 +1299,8 @@ $maxDays =
         body {
             margin: 0;
             font-family: 'Inter', sans-serif;
-            background: #f5f7fb;
-            color: #111827;
+            background: var(--background);
+            color: var(--text);
         }
 
         .sidebar {
@@ -1617,139 +1309,144 @@ $maxDays =
             top: 0;
             width: 260px;
             height: 100vh;
-            background: #111827;
+            background: var(--sidebar);
             color: #fff;
             z-index: 1050;
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
             transition: transform .25s ease;
         }
 
-        .sidebar-brand {
-            height: 76px;
+        .brand {
+            height: 78px;
+            padding: 0 22px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 0 20px;
             border-bottom: 1px solid rgba(255,255,255,.08);
+            flex-shrink: 0;
         }
 
         .brand-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
+            width: 42px;
+            height: 42px;
+            border-radius: 11px;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #2563eb;
+            background: rgba(37,99,235,.18);
+            color: #60a5fa;
             font-size: 20px;
+            margin-right: 11px;
         }
 
         .brand-title {
-            font-size: 16px;
-            font-weight: 700;
+            font-size: 17px;
+            font-weight: 800;
             line-height: 1.2;
         }
 
         .brand-subtitle {
             color: #9ca3af;
             font-size: 11px;
-            margin-top: 2px;
+            margin-top: 3px;
         }
 
-        .sidebar-section {
-            padding: 18px 10px 8px;
+        .sidebar-menu {
+            flex: 1;
+            overflow-y: auto;
+            padding: 18px 12px;
+        }
+
+        .menu-label {
+            padding: 0 12px 9px;
             color: #6b7280;
             font-size: 10px;
             font-weight: 700;
-            letter-spacing: .08em;
             text-transform: uppercase;
+            letter-spacing: .08em;
         }
 
-        .nav-link-custom {
+        .nav-link {
             display: flex;
             align-items: center;
             gap: 12px;
-            width: calc(100% - 20px);
-            margin: 2px 10px;
-            padding: 11px 12px;
-            border-radius: 8px;
-            color: #9ca3af;
+            color: #cbd5e1;
             text-decoration: none;
             font-size: 13px;
+            font-weight: 500;
+            padding: 11px 13px;
+            margin-bottom: 4px;
+            border-radius: 9px;
             transition: .2s ease;
         }
 
-        .nav-link-custom:hover {
-            color: #fff;
-            background: rgba(255,255,255,.07);
-        }
-
-        .nav-link-custom.active {
-            color: #fff;
-            background: #2563eb;
-        }
-
-        .nav-link-custom i {
+        .nav-link i:first-child {
             width: 20px;
-            font-size: 16px;
             text-align: center;
+            font-size: 17px;
+            flex-shrink: 0;
         }
 
-        .nav-group {
-            margin: 0;
+        .nav-link:hover {
+            background: var(--sidebar-hover);
+            color: #fff;
         }
 
-        .nav-parent {
-            width: calc(100% - 20px);
-            border: 0;
-            background: transparent;
-            font-family: inherit;
+        .nav-link.active {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .menu-parent {
             cursor: pointer;
-            color: #9ca3af;
         }
 
-        .nav-parent:hover {
-            background: rgba(255,255,255,.07);
-            color: white;
-        }
-
-        .nav-parent[aria-expanded="true"] {
-            color: white;
-        }
-
-        .submenu-arrow {
-            width: auto !important;
-            font-size: 11px !important;
-            transition: transform .2s ease;
+        .menu-parent .menu-arrow {
             margin-left: auto;
+            font-size: 11px;
+            transition: transform .2s ease;
         }
 
-        .nav-parent[aria-expanded="true"]
-        .submenu-arrow {
+        .menu-parent.open .menu-arrow {
             transform: rotate(180deg);
         }
 
-        .nav-sub-link {
-            margin-left: 30px;
-            margin-right: 10px;
-            width: calc(100% - 40px);
-            padding: 9px 12px;
+        .submenu {
+            display: none;
+            margin-bottom: 6px;
+        }
+
+        .submenu.show {
+            display: block;
+        }
+
+        .submenu .nav-link {
+            padding: 9px 13px 9px 45px;
+            color: #94a3b8;
+            font-size: 12px;
+            position: relative;
+        }
+
+        .submenu .nav-link i {
+            position: absolute;
+            left: 20px;
             font-size: 13px;
-            color: #9ca3af;
+            width: 14px;
         }
 
-        .nav-sub-link i {
-            font-size: 15px;
+        .submenu .nav-link.active {
+            background: rgba(37,99,235,.22);
+            color: #fff;
         }
 
-        .nav-sub-link:hover {
-            color: white;
-            background: rgba(255,255,255,.06);
+        .logout-link {
+            color: #fca5a5;
+            margin-top: 8px;
         }
 
-        .nav-sub-link.active {
-            background: #2563eb;
-            color: white;
+        .logout-link:hover {
+            background: rgba(220,38,38,.12);
+            color: #fecaca;
         }
 
         .main {
@@ -1760,103 +1457,117 @@ $maxDays =
         .topbar {
             height: 78px;
             background: #fff;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            padding: 0 32px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 28px;
-            position: sticky;
-            top: 0;
-            z-index: 900;
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .mobile-menu {
+            display: none;
+            border: 0;
+            background: transparent;
+            font-size: 25px;
+            color: #111827;
         }
 
         .page-title {
-            font-size: 19px;
-            font-weight: 700;
             margin: 0;
+            font-size: 20px;
+            font-weight: 700;
         }
 
         .page-subtitle {
-            color: #6b7280;
+            color: var(--muted);
             font-size: 12px;
             margin-top: 3px;
         }
 
-        .profile {
+        .top-profile {
             display: flex;
             align-items: center;
             gap: 10px;
         }
 
-        .profile-avatar {
+        .top-profile img {
             width: 40px;
             height: 40px;
+            object-fit: cover;
             border-radius: 50%;
-            background: #eff6ff;
-            color: #2563eb;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
+            border: 2px solid #eff6ff;
         }
 
-        .profile-name {
+        .top-profile-name {
             font-size: 13px;
             font-weight: 600;
         }
 
-        .profile-role {
+        .top-profile-role {
+            color: var(--muted);
             font-size: 11px;
-            color: #6b7280;
+            margin-top: 2px;
         }
 
         .content {
-            padding: 28px;
+            padding: 30px 32px;
         }
 
-        .card {
-            border: 1px solid #e5e7eb;
-            border-radius: 14px;
-            box-shadow: 0 4px 15px rgba(15,23,42,.04);
+        .page-header {
+            margin-bottom: 22px;
         }
 
-        .card-header {
-            background: #fff;
-            border-bottom: 1px solid #eef0f3;
-            padding: 18px 20px;
+        .page-header h2 {
+            font-size: 22px;
+            font-weight: 700;
+            margin: 0 0 5px;
+        }
+
+        .page-header p {
+            color: var(--muted);
+            font-size: 13px;
+            margin: 0;
+        }
+
+        .card-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 23px;
+            margin-bottom: 22px;
         }
 
         .card-title {
-            font-size: 15px;
+            font-size: 16px;
             font-weight: 700;
             margin: 0;
         }
 
         .card-description {
-            color: #6b7280;
+            color: var(--muted);
             font-size: 12px;
             margin-top: 4px;
         }
 
-        .form-label {
-            font-size: 12px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 7px;
+        .section {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 24px;
+            margin-bottom: 24px;
         }
 
-        .form-control,
-        .form-select {
-            min-height: 44px;
-            border-radius: 9px;
-            border-color: #d1d5db;
-            font-size: 13px;
-        }
-
-        .form-control:focus,
-        .form-select:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 .2rem rgba(37,99,235,.12);
+        .section:last-child {
+            border-bottom: 0;
+            padding-bottom: 0;
+            margin-bottom: 0;
         }
 
         .section-title {
@@ -1865,51 +1576,125 @@ $maxDays =
             gap: 9px;
             font-size: 14px;
             font-weight: 700;
-            margin-bottom: 18px;
+            margin-bottom: 17px;
         }
 
         .section-title i {
-            color: #2563eb;
+            color: var(--primary);
         }
 
-        .account-field {
+        .form-label {
+            color: #374151;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 7px;
+        }
+
+        .form-control,
+        .form-select {
+            min-height: 44px;
+            border-radius: 9px;
+            border-color: var(--border);
+            font-size: 13px;
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            border-color: #93c5fd;
+            box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+        }
+
+        .readonly-box {
+            min-height: 76px;
             background: #f8fafc;
-        }
-
-        .required {
-            color: #dc2626;
-        }
-
-        .file-box {
-            border: 1px dashed #cbd5e1;
+            border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 14px;
-            background: #f8fafc;
+            padding: 13px;
         }
 
-        .current-file {
-            margin-top: 8px;
-            font-size: 11px;
-            color: #6b7280;
+        .readonly-label {
+            color: var(--muted);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .04em;
+            margin-bottom: 6px;
         }
 
-        .current-file a {
-            color: #2563eb;
-            text-decoration: none;
+        .readonly-value {
+            color: #374151;
+            font-size: 13px;
+            font-weight: 600;
+            word-break: break-word;
+        }
+
+        .search-wrapper {
+            position: relative;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9ca3af;
+            z-index: 2;
+        }
+
+        .search-input {
+            height: 46px;
+            padding-left: 43px;
+        }
+
+        .btn-primary-custom {
+            min-height: 44px;
+            padding: 0 18px;
+            border: 0;
+            border-radius: 9px;
+            background: var(--primary);
+            color: #fff;
+            font-size: 13px;
             font-weight: 600;
         }
 
+        .btn-primary-custom:hover {
+            background: var(--primary-dark);
+            color: #fff;
+        }
+
+        .btn-secondary-custom {
+            min-height: 44px;
+            padding: 0 18px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: #f3f4f6;
+            color: #374151;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .btn-secondary-custom:hover {
+            background: #e5e7eb;
+            color: #111827;
+        }
+
         .teacher-result {
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            padding: 13px;
-            margin-bottom: 9px;
-            background: #fff;
-            transition: .2s ease;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 15px;
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
         }
 
         .teacher-result:hover {
-            border-color: #93c5fd;
+            border-color: #bfdbfe;
             background: #f8fbff;
         }
 
@@ -1919,47 +1704,107 @@ $maxDays =
         }
 
         .teacher-result-info {
-            color: #6b7280;
+            color: var(--muted);
             font-size: 11px;
-            margin-top: 3px;
+            margin-top: 6px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
         }
 
-        .btn-primary {
-            background: #2563eb;
-            border-color: #2563eb;
-            border-radius: 9px;
-            font-size: 13px;
+        .teacher-result-info i {
+            margin-right: 4px;
+        }
+
+        .btn-update {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            white-space: nowrap;
+            background: #eff6ff;
+            color: var(--primary);
+            border: 1px solid #dbeafe;
+            border-radius: 8px;
+            padding: 8px 13px;
+            text-decoration: none;
+            font-size: 12px;
             font-weight: 600;
-            padding: 10px 18px;
         }
 
-        .btn-primary:hover {
-            background: #1d4ed8;
-            border-color: #1d4ed8;
+        .btn-update:hover {
+            background: var(--primary);
+            color: #fff;
         }
 
-        .btn-light {
-            border: 1px solid #d1d5db;
-            border-radius: 9px;
-            font-size: 13px;
+        .file-box {
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .file-box .form-control {
+            background: #fff;
+        }
+
+        .form-text {
+            font-size: 11px;
+        }
+
+        .current-file {
+            margin-top: 9px;
+            font-size: 11px;
+        }
+
+        .current-file a {
+            color: var(--primary);
+            text-decoration: none;
             font-weight: 600;
-            padding: 10px 18px;
         }
 
-        .mobile-menu-btn {
-            display: none;
-            border: 0;
-            background: transparent;
-            font-size: 22px;
-            color: #111827;
+        .current-file a:hover {
+            text-decoration: underline;
         }
 
-        .sidebar-overlay {
+        .teacher-photo-preview {
+            width: 95px;
+            height: 95px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid #eff6ff;
+            background: #f3f4f6;
+        }
+
+        .conditional-file {
             display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(15,23,42,.5);
-            z-index: 1040;
+        }
+
+        .conditional-file.show {
+            display: block;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .empty-state i {
+            display: block;
+            color: #cbd5e1;
+            font-size: 40px;
+            margin-bottom: 12px;
+        }
+
+        .empty-state-title {
+            color: #374151;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .empty-state-text {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 5px;
         }
 
         .alert {
@@ -1967,7 +1812,15 @@ $maxDays =
             font-size: 13px;
         }
 
-        @media (max-width: 991px) {
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,.45);
+            z-index: 1040;
+        }
+
+        @media (max-width: 900px) {
 
             .sidebar {
                 transform: translateX(-100%);
@@ -1985,43 +1838,45 @@ $maxDays =
                 margin-left: 0;
             }
 
-            .mobile-menu-btn {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                margin-right: 10px;
+            .mobile-menu {
+                display: block;
             }
+        }
+
+        @media (max-width: 650px) {
 
             .topbar {
                 padding: 0 16px;
             }
 
             .content {
-                padding: 18px;
+                padding: 20px 15px;
             }
 
-            .profile-name,
-            .profile-role {
+            .top-profile-name,
+            .top-profile-role {
                 display: none;
             }
-        }
-
-        @media (max-width: 575px) {
 
             .page-title {
-                font-size: 16px;
+                font-size: 17px;
             }
 
             .page-subtitle {
                 display: none;
             }
 
-            .content {
-                padding: 14px;
+            .card-box {
+                padding: 17px;
             }
 
-            .topbar {
-                height: 70px;
+            .teacher-result {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .btn-update {
+                width: 100%;
             }
         }
 
@@ -2031,25 +1886,22 @@ $maxDays =
 
 <body>
 
-<div
-    class="sidebar-overlay"
-    id="sidebarOverlay"
-></div>
+<!-- =========================================================
+     SIDEBAR
+========================================================= -->
 
-<!-- Sidebar -->
 <aside
     class="sidebar"
     id="sidebar"
 >
 
-    <div class="sidebar-brand">
+    <div class="brand">
 
         <div class="brand-icon">
             <i class="bi bi-mortarboard-fill"></i>
         </div>
 
         <div>
-
             <div class="brand-title">
                 BKHS
             </div>
@@ -2057,186 +1909,174 @@ $maxDays =
             <div class="brand-subtitle">
                 Registrar Portal
             </div>
-
         </div>
 
     </div>
 
-    <div class="sidebar-section">
-        Main
-    </div>
+    <nav class="sidebar-menu">
 
-    <a
-        href="dashboard.php"
-        class="nav-link-custom"
-    >
-        <i class="bi bi-grid-1x2-fill"></i>
-        <span>Dashboard</span>
-    </a>
+        <div class="menu-label">
+            Main Menu
+        </div>
 
-    <!-- Students -->
-    <div class="nav-group">
+        <a
+            href="dashboard.php"
+            class="nav-link"
+        >
+            <i class="bi bi-grid-1x2-fill"></i>
+            <span>Dashboard</span>
+        </a>
 
-        <button
-            type="button"
-            class="nav-link-custom nav-parent"
-            data-bs-toggle="collapse"
-            data-bs-target="#studentsMenu"
-            aria-expanded="true"
+
+        <!-- Students -->
+
+        <div
+            class="nav-link menu-parent"
+            data-menu="studentsMenu"
         >
 
             <i class="bi bi-people-fill"></i>
 
             <span>Students</span>
 
-            <i class="bi bi-chevron-down submenu-arrow"></i>
+            <i class="bi bi-chevron-down menu-arrow"></i>
 
-        </button>
+        </div>
 
         <div
-            class="collapse show"
+            class="submenu"
             id="studentsMenu"
         >
 
             <a
                 href="register.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
                 <i class="bi bi-person-plus-fill"></i>
                 <span>Register</span>
             </a>
 
             <a
+                href="students.php"
+                class="nav-link"
+            >
+                <i class="bi bi-list-ul"></i>
+                <span>List</span>
+            </a>
+
+            <a
                 href="update-student.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
                 <i class="bi bi-person-gear"></i>
-                <span>Update Student</span>
+                <span>Update</span>
             </a>
 
             <a
                 href="delete-student.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
                 <i class="bi bi-person-x-fill"></i>
-                <span>Delete Student</span>
+                <span>Delete</span>
             </a>
 
             <a
                 href="withdraw-student.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
                 <i class="bi bi-person-dash-fill"></i>
-                <span>Withdraw Student</span>
-            </a>
-
-            <a
-                href="withdrawn-students.php"
-                class="nav-link-custom nav-sub-link"
-            >
-                <i class="bi bi-person-check-fill"></i>
-                <span>Withdrawn Students</span>
+                <span>Withdraw</span>
             </a>
 
         </div>
 
-    </div>
 
-    <!-- Teachers -->
-    <div class="nav-group">
+        <!-- Teachers -->
 
-        <button
-            type="button"
-            class="nav-link-custom nav-parent"
-            data-bs-toggle="collapse"
-            data-bs-target="#teachersMenu"
-            aria-expanded="true"
+        <div
+            class="nav-link menu-parent open"
+            data-menu="teachersMenu"
         >
 
             <i class="bi bi-person-video3"></i>
 
             <span>Teachers</span>
 
-            <i class="bi bi-chevron-down submenu-arrow"></i>
+            <i class="bi bi-chevron-down menu-arrow"></i>
 
-        </button>
+        </div>
 
         <div
-            class="collapse show"
+            class="submenu show"
             id="teachersMenu"
         >
 
             <a
                 href="teachers.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
-                <i class="bi bi-people"></i>
-                <span>Teachers</span>
+                <i class="bi bi-list-ul"></i>
+                <span>List</span>
             </a>
 
             <a
                 href="update-teacher.php"
-                class="nav-link-custom nav-sub-link active"
+                class="nav-link active"
             >
                 <i class="bi bi-person-gear"></i>
-                <span>Update Teacher</span>
+                <span>Update</span>
             </a>
 
             <a
                 href="withdraw-teacher.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
-                <i class="bi bi-person-dash"></i>
-                <span>Withdraw Teacher</span>
+                <i class="bi bi-person-dash-fill"></i>
+                <span>Withdraw</span>
             </a>
 
             <a
                 href="homeroom-teachers.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
-                <i class="bi bi-person-workspace"></i>
-                <span>Homeroom Teachers</span>
+                <i class="bi bi-house-door-fill"></i>
+                <span>Homeroom</span>
             </a>
 
             <a
                 href="subject-teachers.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
-                <i class="bi bi-person-video2"></i>
-                <span>Subject Teachers</span>
+                <i class="bi bi-book-fill"></i>
+                <span>Subject</span>
             </a>
 
         </div>
 
-    </div>
 
-    <!-- Other Staff -->
-    <div class="nav-group">
+        <!-- Other Staff -->
 
-        <button
-            type="button"
-            class="nav-link-custom nav-parent"
-            data-bs-toggle="collapse"
-            data-bs-target="#staffMenu"
-            aria-expanded="false"
+        <div
+            class="nav-link menu-parent"
+            data-menu="staffMenu"
         >
 
             <i class="bi bi-person-badge-fill"></i>
 
             <span>Other Staff</span>
 
-            <i class="bi bi-chevron-down submenu-arrow"></i>
+            <i class="bi bi-chevron-down menu-arrow"></i>
 
-        </button>
+        </div>
 
         <div
-            class="collapse"
+            class="submenu"
             id="staffMenu"
         >
 
             <a
                 href="add-staff.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
                 <i class="bi bi-person-plus-fill"></i>
                 <span>Add Staff</span>
@@ -2244,86 +2084,89 @@ $maxDays =
 
             <a
                 href="staff.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
-                <i class="bi bi-people-fill"></i>
-                <span>Staff</span>
+                <i class="bi bi-list-ul"></i>
+                <span>List</span>
             </a>
 
             <a
                 href="withdraw-staff.php"
-                class="nav-link-custom nav-sub-link"
+                class="nav-link"
             >
                 <i class="bi bi-person-dash-fill"></i>
-                <span>Withdraw Staff</span>
+                <span>Withdraw</span>
             </a>
 
         </div>
 
-    </div>
 
-    <div class="sidebar-section">
-        Academic
-    </div>
+        <a
+            href="certificate.php"
+            class="nav-link"
+        >
+            <i class="bi bi-award-fill"></i>
+            <span>Certificate</span>
+        </a>
 
-    <a
-        href="certificate.php"
-        class="nav-link-custom"
-    >
-        <i class="bi bi-award-fill"></i>
-        <span>Certificate</span>
-    </a>
+        <a
+            href="Roster.php"
+            class="nav-link"
+        >
+            <i class="bi bi-clipboard2-check-fill"></i>
+            <span>Roster</span>
+        </a>
 
-    <a
-        href="Roster.php"
-        class="nav-link-custom"
-    >
-        <i class="bi bi-clipboard2-check-fill"></i>
-        <span>Roster</span>
-    </a>
+        <a
+            href="Transcript.php"
+            class="nav-link"
+        >
+            <i class="bi bi-file-earmark-text-fill"></i>
+            <span>Transcript</span>
+        </a>
 
-    <a
-        href="Transcript.php"
-        class="nav-link-custom"
-    >
-        <i class="bi bi-file-earmark-text-fill"></i>
-        <span>Transcript</span>
-    </a>
+        <a
+            href="profile.php"
+            class="nav-link"
+        >
+            <i class="bi bi-person-circle"></i>
+            <span>Profile</span>
+        </a>
 
-    <div class="sidebar-section">
-        Account
-    </div>
+        <a
+            href="../auth/logout.php"
+            class="nav-link logout-link"
+        >
+            <i class="bi bi-box-arrow-right"></i>
+            <span>Logout</span>
+        </a>
 
-    <a
-        href="profile.php"
-        class="nav-link-custom"
-    >
-        <i class="bi bi-person-circle"></i>
-        <span>Profile</span>
-    </a>
-
-    <a
-        href="../auth/logout.php"
-        class="nav-link-custom"
-    >
-        <i class="bi bi-box-arrow-right"></i>
-        <span>Logout</span>
-    </a>
+    </nav>
 
 </aside>
 
-<!-- Main -->
+<div
+    class="sidebar-overlay"
+    id="sidebarOverlay"
+></div>
+
+
+<!-- =========================================================
+     MAIN
+========================================================= -->
+
 <main class="main">
 
     <!-- Topbar -->
+
     <header class="topbar">
 
-        <div class="d-flex align-items-center">
+        <div class="topbar-left">
 
             <button
                 type="button"
-                class="mobile-menu-btn"
-                id="mobileMenuBtn"
+                class="mobile-menu"
+                id="mobileMenu"
             >
                 <i class="bi bi-list"></i>
             </button>
@@ -2335,45 +2178,27 @@ $maxDays =
                 </h1>
 
                 <div class="page-subtitle">
-                    Manage complete teacher information
+                    Search and update teacher information
                 </div>
 
             </div>
 
         </div>
 
-        <div class="profile">
+        <div class="top-profile">
 
-            <div class="profile-avatar">
-
-                <?php
-
-                $name =
-                    (string) (
-                        $registrar['full_name']
-                        ?? 'Registrar'
-                    );
-
-                echo e(
-                    strtoupper(
-                        substr($name, 0, 1)
-                    )
-                );
-
-                ?>
-
-            </div>
+            <img
+                src="<?= e($registrarPhoto) ?>"
+                alt="Registrar"
+            >
 
             <div>
 
-                <div class="profile-name">
-                    <?= e(
-                        $registrar['full_name']
-                        ?? 'Registrar'
-                    ) ?>
+                <div class="top-profile-name">
+                    <?= e($registrar['full_name'] ?? 'Registrar') ?>
                 </div>
 
-                <div class="profile-role">
+                <div class="top-profile-role">
                     Registrar
                 </div>
 
@@ -2383,295 +2208,335 @@ $maxDays =
 
     </header>
 
+
+    <!-- Content -->
+
     <div class="content">
 
-        <?php if ($success !== ''): ?>
+        <div class="page-header">
 
-            <div class="alert alert-success d-flex align-items-center gap-2">
+            <h2>
+                Teacher Information
+            </h2>
 
-                <i class="bi bi-check-circle-fill"></i>
+            <p>
+                Search for a teacher using their full name,
+                email address, or phone number.
+            </p>
 
-                <span>
-                    <?= e($success) ?>
-                </span>
+        </div>
 
-            </div>
 
-        <?php endif; ?>
+        <?php if ($errorMessage !== ''): ?>
 
-        <?php if ($error !== ''): ?>
+            <div class="alert alert-danger">
 
-            <div class="alert alert-danger d-flex align-items-center gap-2">
+                <i class="bi bi-exclamation-triangle-fill me-2"></i>
 
-                <i class="bi bi-exclamation-triangle-fill"></i>
-
-                <span>
-                    <?= e($error) ?>
-                </span>
+                <?= e($errorMessage) ?>
 
             </div>
 
         <?php endif; ?>
 
-        <!-- Search -->
-        <div class="card mb-4">
 
-            <div class="card-header">
+        <?php if ($successMessage !== ''): ?>
 
-                <div class="card-title">
+            <div class="alert alert-success">
+
+                <i class="bi bi-check-circle-fill me-2"></i>
+
+                <?= e($successMessage) ?>
+
+            </div>
+
+        <?php endif; ?>
+
+
+        <!-- =====================================================
+             SEARCH CARD
+        ====================================================== -->
+
+        <section class="card-box">
+
+            <div class="mb-3">
+
+                <h3 class="card-title">
                     Find Teacher
-                </div>
+                </h3>
 
                 <div class="card-description">
-                    Search using the teacher's name, email, or phone number.
+                    Search by full name, email, or phone number.
                 </div>
 
             </div>
 
-            <div class="card-body">
+            <form
+                method="GET"
+                action="update-teacher.php"
+                autocomplete="off"
+            >
 
-                <form
-                    method="GET"
-                    action="update-teacher.php"
-                >
+                <div class="row g-2">
 
-                    <div class="row g-3">
+                    <div class="col-md-9">
 
-                        <div class="col-md-9">
+                        <div class="search-wrapper">
 
-                            <label class="form-label">
-                                Search Teacher
-                            </label>
+                            <i class="bi bi-search search-icon"></i>
 
                             <input
-                                type="text"
+                                type="search"
                                 name="search"
-                                class="form-control"
+                                class="form-control search-input"
+                                placeholder="Full name, email, or phone..."
                                 value="<?= e($search) ?>"
-                                placeholder="Enter teacher name, email, or phone"
+                                autocomplete="off"
+                                spellcheck="false"
                             >
-
-                        </div>
-
-                        <div class="col-md-3 d-flex align-items-end">
-
-                            <button
-                                type="submit"
-                                class="btn btn-primary w-100"
-                            >
-
-                                <i class="bi bi-search me-1"></i>
-
-                                Search
-
-                            </button>
 
                         </div>
 
                     </div>
 
-                </form>
+                    <div class="col-md-3">
 
-                <?php if ($search !== ''): ?>
+                        <button
+                            type="submit"
+                            class="btn-primary-custom w-100"
+                        >
 
-                    <div class="mt-4">
+                            <i class="bi bi-search me-1"></i>
 
-                        <?php if (count($teachers) > 0): ?>
+                            Search
 
-                            <div class="small text-muted mb-2">
+                        </button>
 
-                                <?= count($teachers) ?>
-                                teacher(s) found.
+                    </div>
 
-                            </div>
+                </div>
 
-                            <?php foreach (
-                                $teachers
-                                as $resultTeacher
-                            ): ?>
+            </form>
 
-                                <div class="teacher-result">
 
-                                    <div
-                                        class="d-flex justify-content-between align-items-center gap-3"
-                                    >
+            <?php if ($search !== ''): ?>
 
-                                        <div>
+                <div class="mt-3">
 
-                                            <div class="teacher-result-name">
+                    <?php if (count($searchResults) > 0): ?>
 
-                                                <?= e(
-                                                    $resultTeacher['full_name']
-                                                ) ?>
+                        <?php foreach ($searchResults as $result): ?>
 
-                                            </div>
+                            <div class="teacher-result">
 
-                                            <div class="teacher-result-info">
+                                <div>
 
-                                                <?= e(
-                                                    $resultTeacher['email'] ?? ''
-                                                ) ?>
+                                    <div class="teacher-result-name">
 
-                                                <?php if (
-                                                    !empty(
-                                                        $resultTeacher['phone']
-                                                    )
-                                                ): ?>
+                                        <?= e(
+                                            $result['full_name']
+                                        ) ?>
 
-                                                    ·
-                                                    <?= e(
-                                                        $resultTeacher['phone']
-                                                    ) ?>
+                                    </div>
 
-                                                <?php endif; ?>
+                                    <div class="teacher-result-info">
 
-                                            </div>
+                                        <?php if (
+                                            !empty($result['email'])
+                                        ): ?>
 
-                                            <?php if (
-                                                empty(
-                                                    $resultTeacher['teacher_id']
-                                                )
-                                            ): ?>
+                                            <span>
+                                                <i class="bi bi-envelope"></i>
+                                                <?= e($result['email']) ?>
+                                            </span>
 
-                                                <div
-                                                    class="text-warning small mt-1"
-                                                >
-                                                    Teacher profile not yet completed
-                                                </div>
+                                        <?php endif; ?>
 
-                                            <?php endif; ?>
+                                        <?php if (
+                                            !empty($result['phone'])
+                                        ): ?>
 
-                                        </div>
+                                            <span>
+                                                <i class="bi bi-telephone"></i>
+                                                <?= e($result['phone']) ?>
+                                            </span>
 
-                                        <a
-                                            href="update-teacher.php?user_id=<?= (int) $resultTeacher['user_id'] ?>"
-                                            class="btn btn-primary btn-sm"
-                                        >
+                                        <?php endif; ?>
 
-                                            <i class="bi bi-pencil-square me-1"></i>
+                                        <?php if (
+                                            !empty($result['department'])
+                                        ): ?>
 
-                                            Manage
+                                            <span>
+                                                <i class="bi bi-building"></i>
+                                                <?= e($result['department']) ?>
+                                            </span>
 
-                                        </a>
+                                        <?php endif; ?>
+
+                                        <span>
+                                            <i class="bi bi-circle-fill"></i>
+                                            <?= e(
+                                                $result['employment_status']
+                                            ) ?>
+                                        </span>
 
                                     </div>
 
                                 </div>
 
-                            <?php endforeach; ?>
+                                <a
+                                    href="update-teacher.php?search=<?= urlencode($search) ?>&teacher_id=<?= (int) $result['teacher_id'] ?>"
+                                    class="btn-update"
+                                >
 
-                        <?php else: ?>
+                                    <i class="bi bi-pencil-square me-1"></i>
 
-                            <div
-                                class="text-center py-4 text-muted"
-                            >
+                                    Update
 
-                                <i class="bi bi-person-x fs-3"></i>
-
-                                <div class="mt-2">
-                                    No teacher found.
-                                </div>
+                                </a>
 
                             </div>
 
-                        <?php endif; ?>
+                        <?php endforeach; ?>
 
-                    </div>
+                    <?php else: ?>
 
-                <?php endif; ?>
+                        <div class="empty-state">
 
-            </div>
+                            <i class="bi bi-person-x"></i>
 
-        </div>
+                            <div class="empty-state-title">
+                                No Teacher Found
+                            </div>
+
+                            <div class="empty-state-text">
+                                Try another name, email, or phone number.
+                            </div>
+
+                        </div>
+
+                    <?php endif; ?>
+
+                </div>
+
+            <?php endif; ?>
+
+        </section>
+
 
         <?php if ($teacher): ?>
 
-            <!-- Teacher Form -->
+            <!-- =================================================
+                 UPDATE FORM
+            ================================================== -->
+
             <form
                 method="POST"
-                action="update-teacher.php?user_id=<?= (int) $teacher['user_id'] ?>"
+                action="update-teacher.php?teacher_id=<?= (int) $teacher['teacher_id'] ?>"
                 enctype="multipart/form-data"
+                autocomplete="off"
             >
 
                 <input
                     type="hidden"
-                    name="csrf_token"
-                    value="<?= e($csrfToken) ?>"
+                    name="teacher_id"
+                    value="<?= (int) $teacher['teacher_id'] ?>"
                 >
 
                 <input
                     type="hidden"
-                    name="user_id"
-                    value="<?= (int) $teacher['user_id'] ?>"
+                    name="update_teacher"
+                    value="1"
                 >
 
-                <!-- Account Information -->
-                <div class="card mb-4">
 
-                    <div class="card-header">
+                <!-- =================================================
+                     ACCOUNT INFORMATION
+                ================================================== -->
 
-                        <div class="card-title">
-                            Account Information
+                <section class="card-box">
+
+                    <div class="section">
+
+                        <div class="section-title">
+
+                            <i class="bi bi-person-lock"></i>
+
+                            User Account Information
+
                         </div>
 
-                        <div class="card-description">
-                            These details are managed by the administrator.
+                        <div class="alert alert-info">
+
+                            <i class="bi bi-info-circle-fill me-2"></i>
+
+                            Full name, email, phone, password and other
+                            account information belong to the
+                            <strong>users</strong> table and cannot be
+                            changed here.
+
                         </div>
-
-                    </div>
-
-                    <div class="card-body">
 
                         <div class="row g-3">
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-                                    Full Name
-                                </label>
+                                <div class="readonly-box">
 
-                                <input
-                                    type="text"
-                                    class="form-control account-field"
-                                    value="<?= e(
-                                        $teacher['full_name']
-                                    ) ?>"
-                                    readonly
-                                >
+                                    <div class="readonly-label">
+                                        Full Name
+                                    </div>
 
-                            </div>
+                                    <div class="readonly-value">
+                                        <?= e(
+                                            $teacher['full_name']
+                                        ) ?>
+                                    </div>
 
-                            <div class="col-md-4">
-
-                                <label class="form-label">
-                                    Email
-                                </label>
-
-                                <input
-                                    type="text"
-                                    class="form-control account-field"
-                                    value="<?= e(
-                                        $teacher['email'] ?? ''
-                                    ) ?>"
-                                    readonly
-                                >
+                                </div>
 
                             </div>
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-                                    Phone
-                                </label>
+                                <div class="readonly-box">
 
-                                <input
-                                    type="text"
-                                    class="form-control account-field"
-                                    value="<?= e(
-                                        $teacher['phone'] ?? ''
-                                    ) ?>"
-                                    readonly
-                                >
+                                    <div class="readonly-label">
+                                        Email
+                                    </div>
+
+                                    <div class="readonly-value">
+
+                                        <?= !empty($teacher['email'])
+                                            ? e($teacher['email'])
+                                            : 'Not provided'
+                                        ?>
+
+                                    </div>
+
+                                </div>
+
+                            </div>
+
+                            <div class="col-md-4">
+
+                                <div class="readonly-box">
+
+                                    <div class="readonly-label">
+                                        Phone
+                                    </div>
+
+                                    <div class="readonly-value">
+
+                                        <?= !empty($teacher['phone'])
+                                            ? e($teacher['phone'])
+                                            : 'Not provided'
+                                        ?>
+
+                                    </div>
+
+                                </div>
 
                             </div>
 
@@ -2679,30 +2544,87 @@ $maxDays =
 
                     </div>
 
-                </div>
 
-                <!-- Personal Information -->
-                <div class="card mb-4">
+                    <!-- =================================================
+                         TEACHER PHOTO
+                    ================================================== -->
 
-                    <div class="card-header">
-
-                        <div class="card-title">
-                            Personal Information
-                        </div>
-
-                        <div class="card-description">
-                            Record the teacher's personal and identification information.
-                        </div>
-
-                    </div>
-
-                    <div class="card-body">
+                    <div class="section">
 
                         <div class="section-title">
 
-                            <i class="bi bi-person-vcard-fill"></i>
+                            <i class="bi bi-camera-fill"></i>
 
-                            Identification
+                            Teacher Photo
+
+                        </div>
+
+                        <div class="row g-4 align-items-center">
+
+                            <div class="col-auto">
+
+                                <?php if ($teacherPhotoUrl !== ''): ?>
+
+                                    <img
+                                        src="<?= e($teacherPhotoUrl) ?>"
+                                        alt="Teacher Photo"
+                                        class="teacher-photo-preview"
+                                    >
+
+                                <?php else: ?>
+
+                                    <div
+                                        class="teacher-photo-preview d-flex align-items-center justify-content-center"
+                                    >
+
+                                        <i class="bi bi-person-fill fs-1 text-secondary"></i>
+
+                                    </div>
+
+                                <?php endif; ?>
+
+                            </div>
+
+                            <div class="col-md-7">
+
+                                <label
+                                    for="teacher_photo"
+                                    class="form-label"
+                                >
+                                    Change Photo
+                                </label>
+
+                                <input
+                                    type="file"
+                                    name="teacher_photo"
+                                    id="teacher_photo"
+                                    class="form-control"
+                                    accept=".jpg,.jpeg,.png,.webp"
+                                >
+
+                                <div class="form-text">
+                                    JPG, JPEG, PNG or WEBP.
+                                    Maximum 5 MB.
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- =================================================
+                         EMPLOYMENT
+                    ================================================== -->
+
+                    <div class="section">
+
+                        <div class="section-title">
+
+                            <i class="bi bi-briefcase-fill"></i>
+
+                            Employment Information
 
                         </div>
 
@@ -2710,46 +2632,110 @@ $maxDays =
 
                             <div class="col-md-6">
 
-                                <label class="form-label">
+                                <label
+                                    for="employment_status"
+                                    class="form-label"
+                                >
+                                    Employment Status
+                                </label>
 
+                                <select
+                                    name="employment_status"
+                                    id="employment_status"
+                                    class="form-select"
+                                    autocomplete="off"
+                                    required
+                                >
+
+                                    <option
+                                        value="Active"
+                                        <?= (
+                                            $teacher['employment_status']
+                                            === 'Active'
+                                        )
+                                            ? 'selected'
+                                            : ''
+                                        ?>
+                                    >
+                                        Active
+                                    </option>
+
+                                    <option
+                                        value="Withdrawn"
+                                        <?= (
+                                            $teacher['employment_status']
+                                            === 'Withdrawn'
+                                        )
+                                            ? 'selected'
+                                            : ''
+                                        ?>
+                                    >
+                                        Withdrawn
+                                    </option>
+
+                                </select>
+
+                            </div>
+
+                            <div class="col-md-6">
+
+                                <label
+                                    for="fayda_number"
+                                    class="form-label"
+                                >
                                     Fayda Number
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
                                 </label>
 
                                 <input
                                     type="text"
                                     name="fayda_number"
+                                    id="fayda_number"
                                     class="form-control"
-                                    value="<?= e(
-                                        $form['fayda_number']
-                                    ) ?>"
                                     maxlength="16"
-                                    minlength="16"
-                                    pattern="[0-9]{16}"
-                                    inputmode="numeric"
-                                    placeholder="Enter 16-digit Fayda Number"
+                                    value="<?= e(
+                                        $teacher['fayda_number']
+                                    ) ?>"
+                                    autocomplete="off"
                                     required
                                 >
 
-                                <div class="form-text">
-                                    Must contain exactly 16 digits.
-                                </div>
-
                             </div>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- =================================================
+                         PERSONAL INFORMATION
+                    ================================================== -->
+
+                    <div class="section">
+
+                        <div class="section-title">
+
+                            <i class="bi bi-person-vcard-fill"></i>
+
+                            Personal Information
+
+                        </div>
+
+                        <div class="row g-3">
 
                             <div class="col-md-6">
 
-                                <label class="form-label">
+                                <label
+                                    for="gender"
+                                    class="form-label"
+                                >
                                     Gender
                                 </label>
 
                                 <select
                                     name="gender"
+                                    id="gender"
                                     class="form-select"
+                                    autocomplete="off"
                                 >
 
                                     <option value="">
@@ -2758,18 +2744,26 @@ $maxDays =
 
                                     <option
                                         value="Male"
-                                        <?= $form['gender'] === 'Male'
+                                        <?= (
+                                            $teacher['gender']
+                                            === 'Male'
+                                        )
                                             ? 'selected'
-                                            : '' ?>
+                                            : ''
+                                        ?>
                                     >
                                         Male
                                     </option>
 
                                     <option
                                         value="Female"
-                                        <?= $form['gender'] === 'Female'
+                                        <?= (
+                                            $teacher['gender']
+                                            === 'Female'
+                                        )
                                             ? 'selected'
-                                            : '' ?>
+                                            : ''
+                                        ?>
                                     >
                                         Female
                                     </option>
@@ -2778,9 +2772,94 @@ $maxDays =
 
                             </div>
 
+                            <div class="col-md-6">
+
+                                <label
+                                    for="marital_status"
+                                    class="form-label"
+                                >
+                                    Marital Status
+                                </label>
+
+                                <select
+                                    name="marital_status"
+                                    id="marital_status"
+                                    class="form-select"
+                                    autocomplete="off"
+                                >
+
+                                    <option value="">
+                                        Select Marital Status
+                                    </option>
+
+                                    <option
+                                        value="Single"
+                                        <?= (
+                                            $teacher['marital_status']
+                                            === 'Single'
+                                        )
+                                            ? 'selected'
+                                            : ''
+                                        ?>
+                                    >
+                                        Single
+                                    </option>
+
+                                    <option
+                                        value="Married"
+                                        <?= (
+                                            $teacher['marital_status']
+                                            === 'Married'
+                                        )
+                                            ? 'selected'
+                                            : ''
+                                        ?>
+                                    >
+                                        Married
+                                    </option>
+
+                                    <option
+                                        value="Divorced"
+                                        <?= (
+                                            $teacher['marital_status']
+                                            === 'Divorced'
+                                        )
+                                            ? 'selected'
+                                            : ''
+                                        ?>
+                                    >
+                                        Divorced
+                                    </option>
+
+                                    <option
+                                        value="Widowed"
+                                        <?= (
+                                            $teacher['marital_status']
+                                            === 'Widowed'
+                                        )
+                                            ? 'selected'
+                                            : ''
+                                        ?>
+                                    >
+                                        Widowed
+                                    </option>
+
+                                </select>
+
+                            </div>
+
                         </div>
 
-                        <div class="section-title mt-4">
+                    </div>
+
+
+                    <!-- =================================================
+                         BIRTH DATE
+                    ================================================== -->
+
+                    <div class="section">
+
+                        <div class="section-title">
 
                             <i class="bi bi-calendar3"></i>
 
@@ -2792,56 +2871,85 @@ $maxDays =
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-                                    Year
+                                <label
+                                    for="birth_eth_year"
+                                    class="form-label"
+                                >
+                                    Birth Year
                                 </label>
 
                                 <input
                                     type="number"
                                     name="birth_eth_year"
+                                    id="birth_eth_year"
                                     class="form-control"
-                                    value="<?= e(
-                                        (string) $form['birth_eth_year']
-                                    ) ?>"
                                     min="1900"
-                                    max="2200"
-                                    placeholder="Year"
+                                    max="2100"
+                                    value="<?= e(
+                                        $teacher['birth_eth_year']
+                                    ) ?>"
+                                    autocomplete="off"
                                 >
 
                             </div>
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-                                    Month
+                                <label
+                                    for="birth_eth_month"
+                                    class="form-label"
+                                >
+                                    Birth Month
                                 </label>
 
                                 <select
                                     name="birth_eth_month"
-                                    id="birthMonth"
+                                    id="birth_eth_month"
                                     class="form-select"
+                                    autocomplete="off"
                                 >
 
                                     <option value="">
                                         Select Month
                                     </option>
 
-                                    <?php foreach (
+                                    <?php
+
+                                    $ethiopianMonths = [
+                                        1 => 'Meskerem',
+                                        2 => 'Tikimt',
+                                        3 => 'Hidar',
+                                        4 => 'Tahsas',
+                                        5 => 'Tir',
+                                        6 => 'Yekatit',
+                                        7 => 'Megabit',
+                                        8 => 'Miazia',
+                                        9 => 'Ginbot',
+                                        10 => 'Sene',
+                                        11 => 'Hamle',
+                                        12 => 'Nehase',
+                                        13 => 'Pagume'
+                                    ];
+
+                                    foreach (
                                         $ethiopianMonths
                                         as $monthNumber => $monthName
-                                    ): ?>
+                                    ):
+
+                                    ?>
 
                                         <option
                                             value="<?= $monthNumber ?>"
-                                            <?= (string)
-                                                $form['birth_eth_month']
-                                                ===
-                                                (string)
-                                                $monthNumber
-                                                    ? 'selected'
-                                                    : '' ?>
+                                            <?= (
+                                                (int) $teacher[
+                                                    'birth_eth_month'
+                                                ] === $monthNumber
+                                            )
+                                                ? 'selected'
+                                                : ''
+                                            ?>
                                         >
-                                            <?= e($monthName) ?>
+                                            <?= $monthName ?>
                                         </option>
 
                                     <?php endforeach; ?>
@@ -2852,51 +2960,44 @@ $maxDays =
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-                                    Day
+                                <label
+                                    for="birth_eth_day"
+                                    class="form-label"
+                                >
+                                    Birth Day
                                 </label>
 
-                                <select
+                                <input
+                                    type="number"
                                     name="birth_eth_day"
-                                    id="birthDay"
-                                    class="form-select"
+                                    id="birth_eth_day"
+                                    class="form-control"
+                                    min="1"
+                                    max="30"
+                                    value="<?= e(
+                                        $teacher['birth_eth_day']
+                                    ) ?>"
+                                    autocomplete="off"
                                 >
-
-                                    <option value="">
-                                        Select Day
-                                    </option>
-
-                                    <?php for (
-                                        $day = 1;
-                                        $day <= $maxDays;
-                                        $day++
-                                    ): ?>
-
-                                        <option
-                                            value="<?= $day ?>"
-                                            <?= (string)
-                                                $form['birth_eth_day']
-                                                ===
-                                                (string) $day
-                                                    ? 'selected'
-                                                    : '' ?>
-                                        >
-                                            <?= $day ?>
-                                        </option>
-
-                                    <?php endfor; ?>
-
-                                </select>
 
                             </div>
 
                         </div>
 
-                        <div class="section-title mt-4">
+                    </div>
+
+
+                    <!-- =================================================
+                         ADDRESS
+                    ================================================== -->
+
+                    <div class="section">
+
+                        <div class="section-title">
 
                             <i class="bi bi-geo-alt-fill"></i>
 
-                            Address
+                            Address Information
 
                         </div>
 
@@ -2904,66 +3005,89 @@ $maxDays =
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
+                                <label
+                                    for="region"
+                                    class="form-label"
+                                >
                                     Region
                                 </label>
 
                                 <input
                                     type="text"
                                     name="region"
+                                    id="region"
                                     class="form-control"
+                                    maxlength="100"
                                     value="<?= e(
-                                        $form['region']
+                                        $teacher['region']
                                     ) ?>"
-                                    placeholder="Region"
+                                    autocomplete="off"
                                 >
 
                             </div>
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
+                                <label
+                                    for="zone"
+                                    class="form-label"
+                                >
                                     Zone
                                 </label>
 
                                 <input
                                     type="text"
                                     name="zone"
+                                    id="zone"
                                     class="form-control"
+                                    maxlength="100"
                                     value="<?= e(
-                                        $form['zone']
+                                        $teacher['zone']
                                     ) ?>"
-                                    placeholder="Zone"
+                                    autocomplete="off"
                                 >
 
                             </div>
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
+                                <label
+                                    for="woreda"
+                                    class="form-label"
+                                >
                                     Woreda
                                 </label>
 
                                 <input
                                     type="text"
                                     name="woreda"
+                                    id="woreda"
                                     class="form-control"
+                                    maxlength="100"
                                     value="<?= e(
-                                        $form['woreda']
+                                        $teacher['woreda']
                                     ) ?>"
-                                    placeholder="Woreda"
+                                    autocomplete="off"
                                 >
 
                             </div>
 
                         </div>
 
-                        <!-- Marital Status -->
-                        <div class="section-title mt-4">
+                    </div>
 
-                            <i class="bi bi-heart-fill"></i>
 
-                            Marital Status
+                    <!-- =================================================
+                         EDUCATION
+                    ================================================== -->
+
+                    <div class="section">
+
+                        <div class="section-title">
+
+                            <i class="bi bi-mortarboard-fill"></i>
+
+                            Education Information
 
                         </div>
 
@@ -2971,210 +3095,92 @@ $maxDays =
 
                             <div class="col-md-6">
 
-                                <label class="form-label">
-                                    Marital Status
-                                </label>
-
-                                <select
-                                    name="marital_status"
-                                    class="form-select"
+                                <label
+                                    for="education_level"
+                                    class="form-label"
                                 >
-
-                                    <option value="">
-                                        Select Status
-                                    </option>
-
-                                    <?php foreach (
-                                        $maritalStatuses
-                                        as $status
-                                    ): ?>
-
-                                        <option
-                                            value="<?= e($status) ?>"
-                                            <?= $form['marital_status']
-                                                === $status
-                                                    ? 'selected'
-                                                    : '' ?>
-                                        >
-                                            <?= e($status) ?>
-                                        </option>
-
-                                    <?php endforeach; ?>
-
-                                </select>
-
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                </div>
-
-                <!-- Education -->
-                <div class="card mb-4">
-
-                    <div class="card-header">
-
-                        <div class="card-title">
-                            Education Information
-                        </div>
-
-                        <div class="card-description">
-                            Record the teacher's education and supporting credential.
-                        </div>
-
-                    </div>
-
-                    <div class="card-body">
-
-                        <div class="row g-3">
-
-                            <div class="col-md-4">
-
-                                <label class="form-label">
-
                                     Education Level
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
-                                </label>
-
-                                <select
-                                    name="education_level"
-                                    class="form-select"
-                                    required
-                                >
-
-                                    <option value="">
-                                        Select Education Level
-                                    </option>
-
-                                    <?php foreach (
-                                        $educationLevels
-                                        as $level
-                                    ): ?>
-
-                                        <option
-                                            value="<?= e($level) ?>"
-                                            <?= $form['education_level']
-                                                === $level
-                                                    ? 'selected'
-                                                    : '' ?>
-                                        >
-                                            <?= e($level) ?>
-                                        </option>
-
-                                    <?php endforeach; ?>
-
-                                </select>
-
-                            </div>
-
-                            <div class="col-md-4">
-
-                                <label class="form-label">
-
-                                    Institution
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
                                 </label>
 
                                 <input
                                     type="text"
-                                    name="college_university_institution"
+                                    name="education_level"
+                                    id="education_level"
                                     class="form-control"
+                                    maxlength="150"
                                     value="<?= e(
-                                        $form[
-                                            'college_university_institution'
-                                        ]
+                                        $teacher['education_level']
                                     ) ?>"
-                                    placeholder="College / University / Institution"
-                                    required
+                                    autocomplete="off"
                                 >
 
                             </div>
 
-                            <div class="col-md-4">
+                            <div class="col-md-6">
 
-                                <label class="form-label">
-
+                                <label
+                                    for="department"
+                                    class="form-label"
+                                >
                                     Department
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
                                 </label>
 
                                 <input
                                     type="text"
                                     name="department"
+                                    id="department"
                                     class="form-control"
+                                    maxlength="150"
                                     value="<?= e(
-                                        $form['department']
+                                        $teacher['department']
                                     ) ?>"
-                                    placeholder="Department"
-                                    required
+                                    autocomplete="off"
                                 >
 
                             </div>
 
                             <div class="col-12">
 
-                                <label class="form-label">
-
-                                    Education Credential
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
-                                </label>
-
                                 <div class="file-box">
+
+                                    <label
+                                        for="education_credential_file"
+                                        class="form-label"
+                                    >
+                                        Education Credential
+                                    </label>
 
                                     <input
                                         type="file"
-                                        name="education_credential"
+                                        name="education_credential_file"
+                                        id="education_credential_file"
                                         class="form-control"
                                         accept=".pdf,.jpg,.jpeg,.png,.webp"
                                     >
 
                                     <div class="form-text">
-                                        PDF, JPG, PNG or WEBP. Maximum 10 MB.
+                                        PDF, JPG, JPEG, PNG or WEBP.
+                                        Maximum 5 MB.
                                     </div>
 
                                     <?php if (
-                                        !empty(
-                                            $teacher[
-                                                'education_credential_path'
-                                            ]
-                                        )
+                                        $educationFileUrl !== ''
                                     ): ?>
 
                                         <div class="current-file">
 
-                                            Current document:
+                                            <i class="bi bi-file-earmark-check-fill text-success me-1"></i>
+
+                                            Current file:
 
                                             <a
-                                                href="../public/<?= e(
-                                                    $teacher[
-                                                        'education_credential_path'
-                                                    ]
+                                                href="<?= e(
+                                                    $educationFileUrl
                                                 ) ?>"
                                                 target="_blank"
+                                                rel="noopener"
                                             >
-
-                                                <i class="bi bi-file-earmark-text"></i>
-
-                                                View education credential
-
+                                                View Education Credential
                                             </a>
 
                                         </div>
@@ -3189,60 +3195,61 @@ $maxDays =
 
                     </div>
 
-                </div>
 
-                <!-- Experience -->
-                <div class="card mb-4">
+                    <!-- =================================================
+                         EXPERIENCE
+                    ================================================== -->
 
-                    <div class="card-header">
+                    <div class="section">
 
-                        <div class="card-title">
-                            Experience
+                        <div class="section-title">
+
+                            <i class="bi bi-person-workspace"></i>
+
+                            Work Experience
+
                         </div>
-
-                        <div class="card-description">
-                            Record whether the teacher has previous experience.
-                        </div>
-
-                    </div>
-
-                    <div class="card-body">
 
                         <div class="row g-3">
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-
+                                <label
+                                    for="has_experience"
+                                    class="form-label"
+                                >
                                     Has Experience?
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
                                 </label>
 
                                 <select
                                     name="has_experience"
-                                    id="hasExperience"
+                                    id="has_experience"
                                     class="form-select"
-                                    required
+                                    autocomplete="off"
                                 >
 
                                     <option
                                         value="No"
-                                        <?= $form['has_experience'] === 'No'
+                                        <?= (
+                                            $teacher['has_experience']
+                                            === 'No'
+                                        )
                                             ? 'selected'
-                                            : '' ?>
+                                            : ''
+                                        ?>
                                     >
                                         No
                                     </option>
 
                                     <option
                                         value="Yes"
-                                        <?= $form['has_experience'] === 'Yes'
+                                        <?= (
+                                            $teacher['has_experience']
+                                            === 'Yes'
+                                        )
                                             ? 'selected'
-                                            : '' ?>
+                                            : ''
+                                        ?>
                                     >
                                         Yes
                                     </option>
@@ -3252,65 +3259,50 @@ $maxDays =
                             </div>
 
                             <div
-                                class="col-md-8"
+                                class="col-md-8 conditional-file"
                                 id="experienceFileContainer"
                             >
 
-                                <label class="form-label">
-
-                                    Experience Document
-
-                                    <?php if (
-                                        $form['has_experience'] === 'Yes'
-                                    ): ?>
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    <?php endif; ?>
-
-                                </label>
-
                                 <div class="file-box">
+
+                                    <label
+                                        for="experience_file"
+                                        class="form-label"
+                                    >
+                                        Experience File
+                                    </label>
 
                                     <input
                                         type="file"
                                         name="experience_file"
-                                        id="experienceFile"
+                                        id="experience_file"
                                         class="form-control"
                                         accept=".pdf,.jpg,.jpeg,.png,.webp"
                                     >
 
                                     <div class="form-text">
-                                        PDF, JPG, PNG or WEBP. Maximum 10 MB.
+                                        Upload experience document
+                                        when the answer is Yes.
                                     </div>
 
                                     <?php if (
-                                        !empty(
-                                            $teacher[
-                                                'experience_file_path'
-                                            ]
-                                        )
+                                        $experienceFileUrl !== ''
                                     ): ?>
 
                                         <div class="current-file">
 
-                                            Current document:
+                                            <i class="bi bi-file-earmark-check-fill text-success me-1"></i>
+
+                                            Current file:
 
                                             <a
-                                                href="../public/<?= e(
-                                                    $teacher[
-                                                        'experience_file_path'
-                                                    ]
+                                                href="<?= e(
+                                                    $experienceFileUrl
                                                 ) ?>"
                                                 target="_blank"
+                                                rel="noopener"
                                             >
-
-                                                <i class="bi bi-file-earmark-text"></i>
-
-                                                View experience document
-
+                                                View Experience File
                                             </a>
 
                                         </div>
@@ -3325,60 +3317,107 @@ $maxDays =
 
                     </div>
 
-                </div>
 
-                <!-- PGDT -->
-                <div class="card mb-4">
+                    <!-- =================================================
+                         COLLEGE / UNIVERSITY
+                    ================================================== -->
 
-                    <div class="card-header">
+                    <div class="section">
 
-                        <div class="card-title">
-                            PGDT Information
+                        <div class="section-title">
+
+                            <i class="bi bi-building-fill"></i>
+
+                            College / University
+
                         </div>
 
-                        <div class="card-description">
-                            Record PGDT status and supporting document.
+                        <div class="row g-3">
+
+                            <div class="col-12">
+
+                                <label
+                                    for="college_university_institution"
+                                    class="form-label"
+                                >
+                                    College / University / Institution
+                                </label>
+
+                                <input
+                                    type="text"
+                                    name="college_university_institution"
+                                    id="college_university_institution"
+                                    class="form-control"
+                                    maxlength="255"
+                                    value="<?= e(
+                                        $teacher[
+                                            'college_university_institution'
+                                        ]
+                                    ) ?>"
+                                    autocomplete="off"
+                                >
+
+                            </div>
+
                         </div>
 
                     </div>
 
-                    <div class="card-body">
+
+                    <!-- =================================================
+                         PGDT
+                    ================================================== -->
+
+                    <div class="section">
+
+                        <div class="section-title">
+
+                            <i class="bi bi-award-fill"></i>
+
+                            PGDT Information
+
+                        </div>
 
                         <div class="row g-3">
 
                             <div class="col-md-4">
 
-                                <label class="form-label">
-
+                                <label
+                                    for="has_pgdt"
+                                    class="form-label"
+                                >
                                     Has PGDT?
-
-                                    <span class="required">
-                                        *
-                                    </span>
-
                                 </label>
 
                                 <select
                                     name="has_pgdt"
-                                    id="hasPgdt"
+                                    id="has_pgdt"
                                     class="form-select"
-                                    required
+                                    autocomplete="off"
                                 >
 
                                     <option
                                         value="No"
-                                        <?= $form['has_pgdt'] === 'No'
+                                        <?= (
+                                            $teacher['has_pgdt']
+                                            === 'No'
+                                        )
                                             ? 'selected'
-                                            : '' ?>
+                                            : ''
+                                        ?>
                                     >
                                         No
                                     </option>
 
                                     <option
                                         value="Yes"
-                                        <?= $form['has_pgdt'] === 'Yes'
+                                        <?= (
+                                            $teacher['has_pgdt']
+                                            === 'Yes'
+                                        )
                                             ? 'selected'
-                                            : '' ?>
+                                            : ''
+                                        ?>
                                     >
                                         Yes
                                     </option>
@@ -3388,65 +3427,50 @@ $maxDays =
                             </div>
 
                             <div
-                                class="col-md-8"
+                                class="col-md-8 conditional-file"
                                 id="pgdtFileContainer"
                             >
 
-                                <label class="form-label">
-
-                                    PGDT Document
-
-                                    <?php if (
-                                        $form['has_pgdt'] === 'Yes'
-                                    ): ?>
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    <?php endif; ?>
-
-                                </label>
-
                                 <div class="file-box">
+
+                                    <label
+                                        for="pgdt_file"
+                                        class="form-label"
+                                    >
+                                        PGDT File
+                                    </label>
 
                                     <input
                                         type="file"
                                         name="pgdt_file"
-                                        id="pgdtFile"
+                                        id="pgdt_file"
                                         class="form-control"
                                         accept=".pdf,.jpg,.jpeg,.png,.webp"
                                     >
 
                                     <div class="form-text">
-                                        PDF, JPG, PNG or WEBP. Maximum 10 MB.
+                                        Upload PGDT document when
+                                        the answer is Yes.
                                     </div>
 
                                     <?php if (
-                                        !empty(
-                                            $teacher[
-                                                'pgdt_file_path'
-                                            ]
-                                        )
+                                        $pgdtFileUrl !== ''
                                     ): ?>
 
                                         <div class="current-file">
 
-                                            Current document:
+                                            <i class="bi bi-file-earmark-check-fill text-success me-1"></i>
+
+                                            Current file:
 
                                             <a
-                                                href="../public/<?= e(
-                                                    $teacher[
-                                                        'pgdt_file_path'
-                                                    ]
+                                                href="<?= e(
+                                                    $pgdtFileUrl
                                                 ) ?>"
                                                 target="_blank"
+                                                rel="noopener"
                                             >
-
-                                                <i class="bi bi-file-earmark-text"></i>
-
-                                                View PGDT document
-
+                                                View PGDT File
                                             </a>
 
                                         </div>
@@ -3461,57 +3485,64 @@ $maxDays =
 
                     </div>
 
-                </div>
 
-                <!-- Actions -->
-                <div class="d-flex justify-content-end gap-2 mb-4">
+                    <!-- =================================================
+                         BUTTONS
+                    ================================================== -->
 
-                    <a
-                        href="update-teacher.php"
-                        class="btn btn-light"
-                    >
-                        Cancel
-                    </a>
-
-                    <button
-                        type="submit"
-                        class="btn btn-primary"
+                    <div
+                        class="d-flex flex-wrap justify-content-end gap-2"
                     >
 
-                        <i class="bi bi-check2-circle me-1"></i>
+                        <a
+                            href="update-teacher.php"
+                            class="btn-secondary-custom"
+                        >
 
-                        Save Teacher Information
+                            <i class="bi bi-x-lg me-1"></i>
 
-                    </button>
+                            Cancel
 
-                </div>
+                        </a>
+
+                        <button
+                            type="submit"
+                            class="btn-primary-custom"
+                            id="updateButton"
+                        >
+
+                            <i class="bi bi-check-circle me-1"></i>
+
+                            Update Teacher
+
+                        </button>
+
+                    </div>
+
+                </section>
 
             </form>
 
         <?php elseif ($search === ''): ?>
 
-            <div class="card">
+            <section class="card-box">
 
-                <div class="card-body text-center py-5">
+                <div class="empty-state">
 
-                    <div
-                        class="mb-3"
-                        style="font-size:42px;color:#2563eb;"
-                    >
-                        <i class="bi bi-person-lines-fill"></i>
+                    <i class="bi bi-person-gear"></i>
+
+                    <div class="empty-state-title">
+                        Search for a Teacher
                     </div>
 
-                    <h5 class="fw-bold">
-                        Select a Teacher
-                    </h5>
-
-                    <p class="text-muted small mb-0">
-                        Search for a teacher above to manage their complete information.
-                    </p>
+                    <div class="empty-state-text">
+                        Enter the teacher's full name,
+                        email, or phone number above.
+                    </div>
 
                 </div>
 
-            </div>
+            </section>
 
         <?php endif; ?>
 
@@ -3519,232 +3550,328 @@ $maxDays =
 
 </main>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
 
-    /*
-    |--------------------------------------------------------------------------
-    | Sidebar
-    |--------------------------------------------------------------------------
-    */
+/*
+|--------------------------------------------------------------------------
+| Mobile Sidebar
+|--------------------------------------------------------------------------
+*/
 
-    const sidebar =
-        document.getElementById('sidebar');
+const mobileMenu =
+    document.getElementById('mobileMenu');
 
-    const sidebarOverlay =
-        document.getElementById('sidebarOverlay');
+const sidebar =
+    document.getElementById('sidebar');
 
-    const mobileMenuBtn =
-        document.getElementById('mobileMenuBtn');
+const sidebarOverlay =
+    document.getElementById('sidebarOverlay');
 
-    function openSidebar() {
+if (mobileMenu) {
 
-        sidebar.classList.add('show');
-
-        sidebarOverlay.classList.add('show');
-    }
-
-    function closeSidebar() {
-
-        sidebar.classList.remove('show');
-
-        sidebarOverlay.classList.remove('show');
-    }
-
-    mobileMenuBtn?.addEventListener(
+    mobileMenu.addEventListener(
         'click',
-        openSidebar
-    );
+        function () {
 
-    sidebarOverlay?.addEventListener(
-        'click',
-        closeSidebar
-    );
+            sidebar.classList.toggle('show');
 
-    /*
-    |--------------------------------------------------------------------------
-    | Ethiopian Birth Day
-    |--------------------------------------------------------------------------
-    */
+            sidebarOverlay.classList.toggle('show');
 
-    const birthMonth =
-        document.getElementById('birthMonth');
-
-    const birthDay =
-        document.getElementById('birthDay');
-
-    function updateBirthDays() {
-
-        if (!birthMonth || !birthDay) {
-            return;
         }
+    );
 
-        const selectedMonth =
-            parseInt(
-                birthMonth.value || '0',
-                10
+}
+
+if (sidebarOverlay) {
+
+    sidebarOverlay.addEventListener(
+        'click',
+        function () {
+
+            sidebar.classList.remove('show');
+
+            sidebarOverlay.classList.remove('show');
+
+        }
+    );
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Sidebar Dropdowns
+|--------------------------------------------------------------------------
+*/
+
+document
+    .querySelectorAll('.menu-parent')
+    .forEach(
+        function (parent) {
+
+            parent.addEventListener(
+                'click',
+                function () {
+
+                    const menuId =
+                        parent.getAttribute('data-menu');
+
+                    const menu =
+                        document.getElementById(menuId);
+
+                    if (!menu) {
+                        return;
+                    }
+
+                    const currentlyOpen =
+                        menu.classList.contains('show');
+
+                    document
+                        .querySelectorAll('.submenu')
+                        .forEach(
+                            function (submenu) {
+                                submenu.classList.remove('show');
+                            }
+                        );
+
+                    document
+                        .querySelectorAll('.menu-parent')
+                        .forEach(
+                            function (item) {
+                                item.classList.remove('open');
+                            }
+                        );
+
+                    if (!currentlyOpen) {
+
+                        menu.classList.add('show');
+
+                        parent.classList.add('open');
+
+                    }
+
+                }
             );
 
-        const selectedDay =
-            birthDay.value;
+        }
+    );
 
-        const maxDays =
-            selectedMonth === 13
-                ? 6
-                : 30;
 
-        birthDay.innerHTML =
-            '<option value="">Select Day</option>';
+/*
+|--------------------------------------------------------------------------
+| Experience File
+|--------------------------------------------------------------------------
+*/
 
-        for (
-            let day = 1;
-            day <= maxDays;
-            day++
+const experienceSelect =
+    document.getElementById('has_experience');
+
+const experienceContainer =
+    document.getElementById(
+        'experienceFileContainer'
+    );
+
+function updateExperienceVisibility() {
+
+    if (
+        !experienceSelect ||
+        !experienceContainer
+    ) {
+        return;
+    }
+
+    if (
+        experienceSelect.value === 'Yes'
+    ) {
+
+        experienceContainer.classList.add('show');
+
+    } else {
+
+        experienceContainer.classList.remove('show');
+
+    }
+
+}
+
+if (experienceSelect) {
+
+    experienceSelect.addEventListener(
+        'change',
+        updateExperienceVisibility
+    );
+
+    updateExperienceVisibility();
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| PGDT File
+|--------------------------------------------------------------------------
+*/
+
+const pgdtSelect =
+    document.getElementById('has_pgdt');
+
+const pgdtContainer =
+    document.getElementById(
+        'pgdtFileContainer'
+    );
+
+function updatePgdtVisibility() {
+
+    if (
+        !pgdtSelect ||
+        !pgdtContainer
+    ) {
+        return;
+    }
+
+    if (
+        pgdtSelect.value === 'Yes'
+    ) {
+
+        pgdtContainer.classList.add('show');
+
+    } else {
+
+        pgdtContainer.classList.remove('show');
+
+    }
+
+}
+
+if (pgdtSelect) {
+
+    pgdtSelect.addEventListener(
+        'change',
+        updatePgdtVisibility
+    );
+
+    updatePgdtVisibility();
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Ethiopian Birth Day Limit
+|--------------------------------------------------------------------------
+*/
+
+const birthMonth =
+    document.getElementById('birth_eth_month');
+
+const birthDay =
+    document.getElementById('birth_eth_day');
+
+function updateBirthDayLimit() {
+
+    if (!birthMonth || !birthDay) {
+        return;
+    }
+
+    if (birthMonth.value === '13') {
+
+        birthDay.max = '6';
+
+        if (
+            parseInt(birthDay.value || '0', 10) > 6
         ) {
+            birthDay.value = '';
+        }
 
-            const option =
-                document.createElement('option');
+    } else {
 
-            option.value =
-                day;
+        birthDay.max = '30';
 
-            option.textContent =
-                day;
+    }
 
-            if (
-                String(day) ===
-                String(selectedDay)
-            ) {
+}
 
-                option.selected =
-                    true;
+if (birthMonth) {
+
+    birthMonth.addEventListener(
+        'change',
+        updateBirthDayLimit
+    );
+
+    updateBirthDayLimit();
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Form Submission
+|--------------------------------------------------------------------------
+*/
+
+const updateForm =
+    document.querySelector(
+        'form[enctype="multipart/form-data"]'
+    );
+
+if (updateForm) {
+
+    updateForm.addEventListener(
+        'submit',
+        function () {
+
+            const button =
+                document.getElementById(
+                    'updateButton'
+                );
+
+            if (!button) {
+                return;
             }
 
-            birthDay.appendChild(
-                option
-            );
-        }
-    }
+            button.disabled = true;
 
-    birthMonth?.addEventListener(
-        'change',
-        updateBirthDays
+            button.innerHTML =
+                '<span class="spinner-border spinner-border-sm me-2"></span>' +
+                'Updating...';
+
+        }
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Experience
-    |--------------------------------------------------------------------------
-    */
+}
 
-    const hasExperience =
-        document.getElementById(
-            'hasExperience'
-        );
 
-    const experienceFile =
-        document.getElementById(
-            'experienceFile'
-        );
+/*
+|--------------------------------------------------------------------------
+| Close Sidebar On Mobile Link Click
+|--------------------------------------------------------------------------
+*/
 
-    const experienceFileContainer =
-        document.getElementById(
-            'experienceFileContainer'
-        );
+document
+    .querySelectorAll('.sidebar a')
+    .forEach(
+        function (link) {
 
-    function updateExperienceField() {
+            link.addEventListener(
+                'click',
+                function () {
 
-        if (!hasExperience) {
-            return;
-        }
+                    if (
+                        window.innerWidth <= 900
+                    ) {
 
-        const yes =
-            hasExperience.value === 'Yes';
+                        sidebar.classList.remove('show');
 
-        const currentFile =
-            experienceFileContainer?.querySelector(
-                '.current-file'
+                        sidebarOverlay.classList.remove('show');
+
+                    }
+
+                }
             );
 
-        if (experienceFile) {
-
-            experienceFile.required =
-                yes && !currentFile;
         }
-
-        if (experienceFileContainer) {
-
-            experienceFileContainer.style.display =
-                yes
-                    ? ''
-                    : 'none';
-        }
-    }
-
-    hasExperience?.addEventListener(
-        'change',
-        updateExperienceField
     );
-
-    /*
-    |--------------------------------------------------------------------------
-    | PGDT
-    |--------------------------------------------------------------------------
-    */
-
-    const hasPgdt =
-        document.getElementById(
-            'hasPgdt'
-        );
-
-    const pgdtFile =
-        document.getElementById(
-            'pgdtFile'
-        );
-
-    const pgdtFileContainer =
-        document.getElementById(
-            'pgdtFileContainer'
-        );
-
-    function updatePgdtField() {
-
-        if (!hasPgdt) {
-            return;
-        }
-
-        const yes =
-            hasPgdt.value === 'Yes';
-
-        const currentFile =
-            pgdtFileContainer?.querySelector(
-                '.current-file'
-            );
-
-        if (pgdtFile) {
-
-            pgdtFile.required =
-                yes && !currentFile;
-        }
-
-        if (pgdtFileContainer) {
-
-            pgdtFileContainer.style.display =
-                yes
-                    ? ''
-                    : 'none';
-        }
-    }
-
-    hasPgdt?.addEventListener(
-        'change',
-        updatePgdtField
-    );
-
-    updateExperienceField();
-
-    updatePgdtField();
 
 </script>
 

@@ -17,18 +17,37 @@ $error = $_SESSION['error'] ?? '';
 
 unset($_SESSION['success'], $_SESSION['error']);
 
+/*
+|--------------------------------------------------------------------------
+| Load Users
+|--------------------------------------------------------------------------
+|
+| Teachers are included only when their employment status is Active.
+| Other user roles are not affected.
+|
+*/
+
 $sql = "
     SELECT
-        id,
-        full_name,
-        email,
-        phone,
-        role,
-        is_logged_in,
-        last_login_at,
-        created_at
-    FROM users
-    ORDER BY created_at DESC
+        u.id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.role,
+        u.is_logged_in,
+        u.last_login_at,
+        u.created_at,
+        t.employment_status
+    FROM users u
+    LEFT JOIN teachers t
+        ON t.user_id = u.id
+    WHERE
+        LOWER(u.role) <> 'teacher'
+        OR (
+            LOWER(u.role) = 'teacher'
+            AND t.employment_status = 'Active'
+        )
+    ORDER BY u.created_at DESC
 ";
 
 $result = $conn->query($sql);
@@ -54,7 +73,10 @@ function roleClass(string $role): string
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
     <title>User Management | Admin</title>
 
@@ -89,6 +111,7 @@ function roleClass(string $role): string
     <aside class="admin-sidebar">
 
         <div class="sidebar-brand">
+
             <div class="brand-mark">
                 <i class="bi bi-mortarboard-fill"></i>
             </div>
@@ -97,6 +120,7 @@ function roleClass(string $role): string
                 <strong>Bole Kale Hiwot</strong>
                 <span>School Management</span>
             </div>
+
         </div>
 
         <nav class="sidebar-nav">
@@ -105,7 +129,10 @@ function roleClass(string $role): string
                 MAIN
             </div>
 
-            <a href="../dashboard.php" class="sidebar-link">
+            <a
+                href="../dashboard.php"
+                class="sidebar-link"
+            >
                 <i class="bi bi-grid-1x2-fill"></i>
                 <span>Dashboard</span>
             </a>
@@ -114,22 +141,22 @@ function roleClass(string $role): string
                 MANAGEMENT
             </div>
 
-            <a href="index.php" class="sidebar-link active">
+            <a
+                href="index.php"
+                class="sidebar-link active"
+            >
                 <i class="bi bi-people-fill"></i>
                 <span>Users</span>
             </a>
-
-           
-
-         
-
-           
 
         </nav>
 
         <div class="sidebar-footer">
 
-            <a href="../../auth/logout.php" class="logout-link">
+            <a
+                href="../../auth/logout.php"
+                class="logout-link"
+            >
                 <i class="bi bi-box-arrow-right"></i>
                 <span>Logout</span>
             </a>
@@ -154,28 +181,52 @@ function roleClass(string $role): string
             </button>
 
             <div class="topbar-title">
+
                 <h1>User Management</h1>
-                <p>Manage school staff and system accounts</p>
+
+                <p>
+                    Manage school staff and system accounts
+                </p>
+
             </div>
 
             <div class="topbar-actions">
 
-                <button class="topbar-icon-button">
+                <button
+                    type="button"
+                    class="topbar-icon-button"
+                >
                     <i class="bi bi-bell"></i>
                     <span class="notification-dot"></span>
                 </button>
 
                 <div class="admin-profile">
+
                     <div class="profile-avatar">
-                        <?= strtoupper(substr($_SESSION['full_name'] ?? 'A', 0, 1)) ?>
+                        <?= strtoupper(
+                            substr(
+                                $_SESSION['full_name'] ?? 'A',
+                                0,
+                                1
+                            )
+                        ) ?>
                     </div>
 
                     <div class="profile-info">
+
                         <strong>
-                            <?= htmlspecialchars($_SESSION['full_name'] ?? 'Administrator') ?>
+                            <?= htmlspecialchars(
+                                $_SESSION['full_name']
+                                ?? 'Administrator'
+                            ) ?>
                         </strong>
-                        <span>Administrator</span>
+
+                        <span>
+                            Administrator
+                        </span>
+
                     </div>
+
                 </div>
 
             </div>
@@ -190,20 +241,35 @@ function roleClass(string $role): string
             <div class="page-header">
 
                 <div>
+
                     <div class="breadcrumb-area">
-                        <a href="../dashboard.php">Dashboard</a>
+
+                        <a href="../dashboard.php">
+                            Dashboard
+                        </a>
+
                         <i class="bi bi-chevron-right"></i>
-                        <span>Users</span>
+
+                        <span>
+                            Users
+                        </span>
+
                     </div>
 
-                    <h2>System Users</h2>
+                    <h2>
+                        System Users
+                    </h2>
 
                     <p>
                         Create and manage administrator and staff accounts.
                     </p>
+
                 </div>
 
-                <a href="create.php" class="btn-add-user">
+                <a
+                    href="create.php"
+                    class="btn-add-user"
+                >
                     <i class="bi bi-person-plus-fill"></i>
                     <span>Add User</span>
                 </a>
@@ -215,6 +281,7 @@ function roleClass(string $role): string
             <?php if ($success): ?>
 
                 <div class="alert-message alert-success-message">
+
                     <i class="bi bi-check-circle-fill"></i>
 
                     <span>
@@ -228,6 +295,7 @@ function roleClass(string $role): string
                     >
                         <i class="bi bi-x"></i>
                     </button>
+
                 </div>
 
             <?php endif; ?>
@@ -236,6 +304,7 @@ function roleClass(string $role): string
             <?php if ($error): ?>
 
                 <div class="alert-message alert-error-message">
+
                     <i class="bi bi-exclamation-circle-fill"></i>
 
                     <span>
@@ -249,6 +318,7 @@ function roleClass(string $role): string
                     >
                         <i class="bi bi-x"></i>
                     </button>
+
                 </div>
 
             <?php endif; ?>
@@ -258,18 +328,32 @@ function roleClass(string $role): string
             <div class="user-stats">
 
                 <div class="stat-card">
+
                     <div class="stat-icon">
                         <i class="bi bi-people-fill"></i>
                     </div>
 
                     <div>
-                        <span>Total Users</span>
-                        <strong><?= $result ? $result->num_rows : 0 ?></strong>
+
+                        <span>
+                            Total Users
+                        </span>
+
+                        <strong>
+                            <?= $result
+                                ? $result->num_rows
+                                : 0 ?>
+                        </strong>
+
                     </div>
+
                 </div>
 
+
                 <?php
+
                 $onlineCount = 0;
+
                 $roleCounts = [
                     'Admin' => 0,
                     'Principal' => 0,
@@ -279,59 +363,110 @@ function roleClass(string $role): string
                 ];
 
                 if ($result) {
+
                     $result->data_seek(0);
 
-                    while ($user = $result->fetch_assoc()) {
+                    while (
+                        $user = $result->fetch_assoc()
+                    ) {
 
-                        if ((int)$user['is_logged_in'] === 1) {
+                        if (
+                            (int) $user['is_logged_in'] === 1
+                        ) {
                             $onlineCount++;
                         }
 
-                        if (isset($roleCounts[$user['role']])) {
-                            $roleCounts[$user['role']]++;
+                        $role =
+                            strtolower(
+                                trim(
+                                    (string) $user['role']
+                                )
+                            );
+
+                        foreach (
+                            array_keys($roleCounts)
+                            as $roleName
+                        ) {
+
+                            if (
+                                strtolower($roleName)
+                                === $role
+                            ) {
+
+                                $roleCounts[$roleName]++;
+                                break;
+                            }
                         }
                     }
 
                     $result->data_seek(0);
                 }
+
                 ?>
 
                 <div class="stat-card">
+
                     <div class="stat-icon online-icon">
                         <i class="bi bi-circle-fill"></i>
                     </div>
 
                     <div>
-                        <span>Online Now</span>
-                        <strong><?= $onlineCount ?></strong>
+
+                        <span>
+                            Online Now
+                        </span>
+
+                        <strong>
+                            <?= $onlineCount ?>
+                        </strong>
+
                     </div>
+
                 </div>
 
+
                 <div class="stat-card">
+
                     <div class="stat-icon teacher-icon">
                         <i class="bi bi-person-workspace"></i>
                     </div>
 
                     <div>
-                        <span>Teachers</span>
-                        <strong><?= $roleCounts['Teacher'] ?></strong>
+
+                        <span>
+                            Active Teachers
+                        </span>
+
+                        <strong>
+                            <?= $roleCounts['Teacher'] ?>
+                        </strong>
+
                     </div>
+
                 </div>
 
+
                 <div class="stat-card">
+
                     <div class="stat-icon staff-icon">
                         <i class="bi bi-person-badge-fill"></i>
                     </div>
 
                     <div>
-                        <span>Other Staff</span>
+
+                        <span>
+                            Other Staff
+                        </span>
+
                         <strong>
                             <?= $roleCounts['Admin']
                                 + $roleCounts['Principal']
                                 + $roleCounts['Registrar']
                                 + $roleCounts['Librarian'] ?>
                         </strong>
+
                     </div>
+
                 </div>
 
             </div>
@@ -343,11 +478,19 @@ function roleClass(string $role): string
                 <div class="users-card-header">
 
                     <div>
-                        <h3>All Users</h3>
-                        <p>Manage staff access to the school system.</p>
+
+                        <h3>
+                            All Users
+                        </h3>
+
+                        <p>
+                            Manage staff access to the school system.
+                        </p>
+
                     </div>
 
                     <div class="table-search">
+
                         <i class="bi bi-search"></i>
 
                         <input
@@ -355,6 +498,7 @@ function roleClass(string $role): string
                             id="userSearch"
                             placeholder="Search users..."
                         >
+
                     </div>
 
                 </div>
@@ -419,9 +563,13 @@ function roleClass(string $role): string
 
                 <div class="table-responsive">
 
-                    <table class="users-table" id="usersTable">
+                    <table
+                        class="users-table"
+                        id="usersTable"
+                    >
 
                         <thead>
+
                             <tr>
                                 <th>User</th>
                                 <th>Contact</th>
@@ -429,93 +577,150 @@ function roleClass(string $role): string
                                 <th>Status</th>
                                 <th>Last Login</th>
                                 <th>Created</th>
-                                <th class="text-end">Actions</th>
+                                <th class="text-end">
+                                    Actions
+                                </th>
                             </tr>
+
                         </thead>
 
                         <tbody>
 
-                        <?php if ($result && $result->num_rows > 0): ?>
+                        <?php if (
+                            $result &&
+                            $result->num_rows > 0
+                        ): ?>
 
-                            <?php while ($user = $result->fetch_assoc()): ?>
+                            <?php while (
+                                $user = $result->fetch_assoc()
+                            ): ?>
 
-                                <tr data-role="<?= htmlspecialchars($user['role']) ?>">
+                                <tr
+                                    data-role="<?= htmlspecialchars(
+                                        $user['role']
+                                    ) ?>"
+                                >
 
                                     <!-- User -->
                                     <td>
+
                                         <div class="user-cell">
 
                                             <div class="user-avatar">
+
                                                 <?= strtoupper(
                                                     substr(
-                                                        trim($user['full_name']),
+                                                        trim(
+                                                            $user['full_name']
+                                                        ),
                                                         0,
                                                         1
                                                     )
                                                 ) ?>
+
                                             </div>
 
                                             <div class="user-name">
+
                                                 <strong>
-                                                    <?= htmlspecialchars($user['full_name']) ?>
+                                                    <?= htmlspecialchars(
+                                                        $user['full_name']
+                                                    ) ?>
                                                 </strong>
 
                                                 <?php if (
-                                                    isset($_SESSION['user_id']) &&
-                                                    (int)$_SESSION['user_id'] === (int)$user['id']
+                                                    isset(
+                                                        $_SESSION['user_id']
+                                                    ) &&
+                                                    (int) $_SESSION['user_id']
+                                                        ===
+                                                    (int) $user['id']
                                                 ): ?>
+
                                                     <span class="you-label">
                                                         You
                                                     </span>
+
                                                 <?php endif; ?>
 
                                             </div>
 
                                         </div>
+
                                     </td>
 
 
                                     <!-- Contact -->
                                     <td>
+
                                         <div class="contact-cell">
 
                                             <span>
+
                                                 <i class="bi bi-envelope"></i>
-                                                <?= htmlspecialchars($user['email']) ?>
+
+                                                <?= htmlspecialchars(
+                                                    $user['email']
+                                                ) ?>
+
                                             </span>
 
-                                            <?php if (!empty($user['phone'])): ?>
+                                            <?php if (
+                                                !empty($user['phone'])
+                                            ): ?>
+
                                                 <span>
+
                                                     <i class="bi bi-telephone"></i>
-                                                    <?= htmlspecialchars($user['phone']) ?>
+
+                                                    <?= htmlspecialchars(
+                                                        $user['phone']
+                                                    ) ?>
+
                                                 </span>
+
                                             <?php endif; ?>
 
                                         </div>
+
                                     </td>
 
 
                                     <!-- Role -->
                                     <td>
-                                        <span class="role-badge <?= roleClass($user['role']) ?>">
-                                            <?= htmlspecialchars($user['role']) ?>
+
+                                        <span
+                                            class="role-badge <?= roleClass(
+                                                $user['role']
+                                            ) ?>"
+                                        >
+                                            <?= htmlspecialchars(
+                                                $user['role']
+                                            ) ?>
                                         </span>
+
                                     </td>
 
 
                                     <!-- Status -->
                                     <td>
 
-                                        <?php if ((int)$user['is_logged_in'] === 1): ?>
+                                        <?php if (
+                                            (int) $user['is_logged_in'] === 1
+                                        ): ?>
 
-                                            <span class="status-badge status-online">
+                                            <span
+                                                class="status-badge status-online"
+                                            >
                                                 <span class="status-dot"></span>
                                                 Online
                                             </span>
 
                                         <?php else: ?>
 
-                                            <span class="status-badge status-offline">
+                                            <span
+                                                class="status-badge status-offline"
+                                            >
                                                 <span class="status-dot"></span>
                                                 Offline
                                             </span>
@@ -528,20 +733,32 @@ function roleClass(string $role): string
                                     <!-- Last Login -->
                                     <td>
 
-                                        <?php if (!empty($user['last_login_at'])): ?>
+                                        <?php if (
+                                            !empty(
+                                                $user['last_login_at']
+                                            )
+                                        ): ?>
 
                                             <span class="date-text">
+
                                                 <?= date(
                                                     'M d, Y',
-                                                    strtotime($user['last_login_at'])
+                                                    strtotime(
+                                                        $user['last_login_at']
+                                                    )
                                                 ) ?>
+
                                             </span>
 
                                             <small>
+
                                                 <?= date(
                                                     'h:i A',
-                                                    strtotime($user['last_login_at'])
+                                                    strtotime(
+                                                        $user['last_login_at']
+                                                    )
                                                 ) ?>
+
                                             </small>
 
                                         <?php else: ?>
@@ -557,12 +774,18 @@ function roleClass(string $role): string
 
                                     <!-- Created -->
                                     <td>
+
                                         <span class="date-text">
+
                                             <?= date(
                                                 'M d, Y',
-                                                strtotime($user['created_at'])
+                                                strtotime(
+                                                    $user['created_at']
+                                                )
                                             ) ?>
+
                                         </span>
+
                                     </td>
 
 
@@ -572,7 +795,7 @@ function roleClass(string $role): string
                                         <div class="user-actions">
 
                                             <a
-                                                href="edit.php?id=<?= (int)$user['id'] ?>"
+                                                href="edit.php?id=<?= (int) $user['id'] ?>"
                                                 class="action-button edit-action"
                                                 title="Edit User"
                                             >
@@ -580,20 +803,29 @@ function roleClass(string $role): string
                                             </a>
 
                                             <?php if (
-                                                !isset($_SESSION['user_id']) ||
-                                                (int)$_SESSION['user_id'] !== (int)$user['id']
+                                                !isset(
+                                                    $_SESSION['user_id']
+                                                ) ||
+                                                (int) $_SESSION['user_id']
+                                                    !==
+                                                (int) $user['id']
                                             ): ?>
 
                                                 <form
                                                     action="delete.php"
                                                     method="POST"
                                                     class="delete-form"
-                                                    onsubmit="return confirmDelete('<?= htmlspecialchars(addslashes($user['full_name'])) ?>')"
+                                                    onsubmit="return confirmDelete('<?= htmlspecialchars(
+                                                        addslashes(
+                                                            $user['full_name']
+                                                        )
+                                                    ) ?>')"
                                                 >
+
                                                     <input
                                                         type="hidden"
                                                         name="id"
-                                                        value="<?= (int)$user['id'] ?>"
+                                                        value="<?= (int) $user['id'] ?>"
                                                     >
 
                                                     <button
@@ -603,6 +835,7 @@ function roleClass(string $role): string
                                                     >
                                                         <i class="bi bi-trash3"></i>
                                                     </button>
+
                                                 </form>
 
                                             <?php endif; ?>
@@ -618,6 +851,7 @@ function roleClass(string $role): string
                         <?php else: ?>
 
                             <tr>
+
                                 <td colspan="7">
 
                                     <div class="empty-state">
@@ -626,13 +860,19 @@ function roleClass(string $role): string
                                             <i class="bi bi-people"></i>
                                         </div>
 
-                                        <h4>No users found</h4>
+                                        <h4>
+                                            No users found
+                                        </h4>
 
                                         <p>
-                                            Start by creating your first staff account.
+                                            Start by creating your first
+                                            staff account.
                                         </p>
 
-                                        <a href="create.php" class="btn-add-user">
+                                        <a
+                                            href="create.php"
+                                            class="btn-add-user"
+                                        >
                                             <i class="bi bi-person-plus"></i>
                                             Add User
                                         </a>
@@ -640,6 +880,7 @@ function roleClass(string $role): string
                                     </div>
 
                                 </td>
+
                             </tr>
 
                         <?php endif; ?>
@@ -657,13 +898,18 @@ function roleClass(string $role): string
                     id="paginationContainer"
                 >
 
-                    <div class="text-muted small" id="paginationInfo"></div>
+                    <div
+                        class="text-muted small"
+                        id="paginationInfo"
+                    ></div>
 
                     <nav aria-label="Users pagination">
+
                         <ul
                             class="pagination pagination-sm mb-0"
                             id="pagination"
                         ></ul>
+
                     </nav>
 
                 </div>
@@ -678,23 +924,46 @@ function roleClass(string $role): string
 
 
 <!-- Mobile Overlay -->
-<div class="sidebar-overlay" id="sidebarOverlay"></div>
+<div
+    class="sidebar-overlay"
+    id="sidebarOverlay"
+></div>
 
 
 <script>
-const mobileMenuButton = document.getElementById('mobileMenuButton');
-const sidebar = document.querySelector('.admin-sidebar');
-const overlay = document.getElementById('sidebarOverlay');
 
-mobileMenuButton?.addEventListener('click', () => {
-    sidebar.classList.toggle('show');
-    overlay.classList.toggle('show');
-});
+const mobileMenuButton =
+    document.getElementById('mobileMenuButton');
 
-overlay?.addEventListener('click', () => {
-    sidebar.classList.remove('show');
-    overlay.classList.remove('show');
-});
+const sidebar =
+    document.querySelector('.admin-sidebar');
+
+const overlay =
+    document.getElementById('sidebarOverlay');
+
+
+mobileMenuButton?.addEventListener(
+    'click',
+    () => {
+
+        sidebar.classList.toggle('show');
+
+        overlay.classList.toggle('show');
+
+    }
+);
+
+
+overlay?.addEventListener(
+    'click',
+    () => {
+
+        sidebar.classList.remove('show');
+
+        overlay.classList.remove('show');
+
+    }
+);
 
 
 /*
@@ -703,34 +972,53 @@ overlay?.addEventListener('click', () => {
 |--------------------------------------------------------------------------
 */
 
-const searchInput = document.getElementById('userSearch');
-const table = document.getElementById('usersTable');
-const pagination = document.getElementById('pagination');
-const paginationInfo = document.getElementById('paginationInfo');
-const roleFilters = document.querySelectorAll('.role-filter');
+const searchInput =
+    document.getElementById('userSearch');
+
+const table =
+    document.getElementById('usersTable');
+
+const pagination =
+    document.getElementById('pagination');
+
+const paginationInfo =
+    document.getElementById('paginationInfo');
+
+const roleFilters =
+    document.querySelectorAll('.role-filter');
 
 const rowsPerPage = 10;
 
 let currentPage = 1;
+
 let currentRole = 'all';
 
 
 function getFilteredRows() {
 
-    const searchValue = searchInput
-        ? searchInput.value.toLowerCase().trim()
-        : '';
+    const searchValue =
+        searchInput
+            ? searchInput.value
+                .toLowerCase()
+                .trim()
+            : '';
 
-    const rows = Array.from(
-        table.querySelectorAll('tbody tr[data-role]')
-    );
+    const rows =
+        Array.from(
+            table.querySelectorAll(
+                'tbody tr[data-role]'
+            )
+        );
 
     return rows.filter(row => {
 
-        const rowText = row.textContent.toLowerCase();
-        const rowRole = (
-            row.getAttribute('data-role') || ''
-        ).toLowerCase();
+        const rowText =
+            row.textContent.toLowerCase();
+
+        const rowRole =
+            (
+                row.getAttribute('data-role') || ''
+            ).toLowerCase();
 
         const matchesSearch =
             searchValue === '' ||
@@ -740,17 +1028,28 @@ function getFilteredRows() {
             currentRole === 'all' ||
             rowRole === currentRole.toLowerCase();
 
-        return matchesSearch && matchesRole;
+        return (
+            matchesSearch &&
+            matchesRole
+        );
     });
 }
 
 
 function renderPagination(filteredRows) {
 
-    const totalRows = filteredRows.length;
-    const totalPages = Math.ceil(totalRows / rowsPerPage);
+    const totalRows =
+        filteredRows.length;
 
-    if (currentPage > totalPages && totalPages > 0) {
+    const totalPages =
+        Math.ceil(
+            totalRows / rowsPerPage
+        );
+
+    if (
+        currentPage > totalPages &&
+        totalPages > 0
+    ) {
         currentPage = totalPages;
     }
 
@@ -758,27 +1057,30 @@ function renderPagination(filteredRows) {
         currentPage = 1;
     }
 
-
     const startIndex =
-        (currentPage - 1) * rowsPerPage;
+        (currentPage - 1) *
+        rowsPerPage;
 
     const endIndex =
-        startIndex + rowsPerPage;
-
+        startIndex +
+        rowsPerPage;
 
     const visibleRows =
-        filteredRows.slice(startIndex, endIndex);
+        filteredRows.slice(
+            startIndex,
+            endIndex
+        );
 
-
-    const allRows = Array.from(
-        table.querySelectorAll('tbody tr[data-role]')
-    );
-
+    const allRows =
+        Array.from(
+            table.querySelectorAll(
+                'tbody tr[data-role]'
+            )
+        );
 
     allRows.forEach(row => {
         row.style.display = 'none';
     });
-
 
     visibleRows.forEach(row => {
         row.style.display = '';
@@ -798,12 +1100,14 @@ function renderPagination(filteredRows) {
 
     } else {
 
-        const showingStart = startIndex + 1;
+        const showingStart =
+            startIndex + 1;
 
-        const showingEnd = Math.min(
-            endIndex,
-            totalRows
-        );
+        const showingEnd =
+            Math.min(
+                endIndex,
+                totalRows
+            );
 
         paginationInfo.textContent =
             `Showing ${showingStart}-${showingEnd} of ${totalRows} users`;
@@ -829,10 +1133,15 @@ function renderPagination(filteredRows) {
     |--------------------------------------------------------------------------
     */
 
-    const previousItem = document.createElement('li');
+    const previousItem =
+        document.createElement('li');
 
     previousItem.className =
-        `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+        `page-item ${
+            currentPage === 1
+                ? 'disabled'
+                : ''
+        }`;
 
     previousItem.innerHTML = `
         <button
@@ -848,15 +1157,21 @@ function renderPagination(filteredRows) {
 
         previousItem
             .querySelector('button')
-            .addEventListener('click', () => {
+            .addEventListener(
+                'click',
+                () => {
 
-                currentPage--;
+                    currentPage--;
 
-                updateTable();
-            });
+                    updateTable();
+
+                }
+            );
     }
 
-    pagination.appendChild(previousItem);
+    pagination.appendChild(
+        previousItem
+    );
 
 
     /*
@@ -865,12 +1180,21 @@ function renderPagination(filteredRows) {
     |--------------------------------------------------------------------------
     */
 
-    for (let page = 1; page <= totalPages; page++) {
+    for (
+        let page = 1;
+        page <= totalPages;
+        page++
+    ) {
 
-        const pageItem = document.createElement('li');
+        const pageItem =
+            document.createElement('li');
 
         pageItem.className =
-            `page-item ${page === currentPage ? 'active' : ''}`;
+            `page-item ${
+                page === currentPage
+                    ? 'active'
+                    : ''
+            }`;
 
         pageItem.innerHTML = `
             <button
@@ -883,14 +1207,20 @@ function renderPagination(filteredRows) {
 
         pageItem
             .querySelector('button')
-            .addEventListener('click', () => {
+            .addEventListener(
+                'click',
+                () => {
 
-                currentPage = page;
+                    currentPage = page;
 
-                updateTable();
-            });
+                    updateTable();
 
-        pagination.appendChild(pageItem);
+                }
+            );
+
+        pagination.appendChild(
+            pageItem
+        );
     }
 
 
@@ -900,11 +1230,14 @@ function renderPagination(filteredRows) {
     |--------------------------------------------------------------------------
     */
 
-    const nextItem = document.createElement('li');
+    const nextItem =
+        document.createElement('li');
 
     nextItem.className =
         `page-item ${
-            currentPage === totalPages ? 'disabled' : ''
+            currentPage === totalPages
+                ? 'disabled'
+                : ''
         }`;
 
     nextItem.innerHTML = `
@@ -917,54 +1250,73 @@ function renderPagination(filteredRows) {
         </button>
     `;
 
-    if (currentPage < totalPages) {
+    if (
+        currentPage < totalPages
+    ) {
 
         nextItem
             .querySelector('button')
-            .addEventListener('click', () => {
+            .addEventListener(
+                'click',
+                () => {
 
-                currentPage++;
+                    currentPage++;
 
-                updateTable();
-            });
+                    updateTable();
+
+                }
+            );
     }
 
-    pagination.appendChild(nextItem);
+    pagination.appendChild(
+        nextItem
+    );
 }
 
 
 function showNoResultsRow() {
 
-    const tbody = table.querySelector('tbody');
+    const tbody =
+        table.querySelector('tbody');
 
     let noResultsRow =
-        document.getElementById('noFilteredResults');
+        document.getElementById(
+            'noFilteredResults'
+        );
 
     if (!noResultsRow) {
 
-        noResultsRow = document.createElement('tr');
+        noResultsRow =
+            document.createElement('tr');
 
-        noResultsRow.id = 'noFilteredResults';
+        noResultsRow.id =
+            'noFilteredResults';
 
         noResultsRow.innerHTML = `
             <td colspan="7">
+
                 <div class="empty-state">
 
                     <div class="empty-icon">
                         <i class="bi bi-search"></i>
                     </div>
 
-                    <h4>No users found</h4>
+                    <h4>
+                        No users found
+                    </h4>
 
                     <p>
                         No users match your search or role filter.
                     </p>
 
                 </div>
+
             </td>
         `;
 
-        tbody.appendChild(noResultsRow);
+        tbody.appendChild(
+            noResultsRow
+        );
     }
 
     noResultsRow.style.display = '';
@@ -974,7 +1326,9 @@ function showNoResultsRow() {
 function hideNoResultsRow() {
 
     const noResultsRow =
-        document.getElementById('noFilteredResults');
+        document.getElementById(
+            'noFilteredResults'
+        );
 
     if (noResultsRow) {
         noResultsRow.style.display = 'none';
@@ -984,13 +1338,19 @@ function hideNoResultsRow() {
 
 function updateTable() {
 
-    const filteredRows = getFilteredRows();
+    const filteredRows =
+        getFilteredRows();
 
-    if (filteredRows.length === 0) {
+    if (
+        filteredRows.length === 0
+    ) {
 
-        const allRows = Array.from(
-            table.querySelectorAll('tbody tr[data-role]')
-        );
+        const allRows =
+            Array.from(
+                table.querySelectorAll(
+                    'tbody tr[data-role]'
+                )
+            );
 
         allRows.forEach(row => {
             row.style.display = 'none';
@@ -1003,7 +1363,9 @@ function updateTable() {
         hideNoResultsRow();
     }
 
-    renderPagination(filteredRows);
+    renderPagination(
+        filteredRows
+    );
 }
 
 
@@ -1013,12 +1375,16 @@ function updateTable() {
 |--------------------------------------------------------------------------
 */
 
-searchInput?.addEventListener('input', function () {
+searchInput?.addEventListener(
+    'input',
+    function () {
 
-    currentPage = 1;
+        currentPage = 1;
 
-    updateTable();
-});
+        updateTable();
+
+    }
+);
 
 
 /*
@@ -1029,40 +1395,54 @@ searchInput?.addEventListener('input', function () {
 
 roleFilters.forEach(button => {
 
-    button.addEventListener('click', function () {
+    button.addEventListener(
+        'click',
+        function () {
 
-        currentRole =
-            this.getAttribute('data-role') || 'all';
+            currentRole =
+                this.getAttribute(
+                    'data-role'
+                ) || 'all';
 
-        currentPage = 1;
-
-
-        /*
-        | Remove active styling
-        */
-        roleFilters.forEach(filter => {
-
-            filter.classList.remove('active');
-
-            filter.classList.remove('btn-primary');
-
-            filter.classList.add('btn-outline-secondary');
-
-        });
+            currentPage = 1;
 
 
-        /*
-        | Add active styling
-        */
-        this.classList.add('active');
+            roleFilters.forEach(
+                filter => {
 
-        this.classList.remove('btn-outline-secondary');
+                    filter.classList.remove(
+                        'active'
+                    );
 
-        this.classList.add('btn-primary');
+                    filter.classList.remove(
+                        'btn-primary'
+                    );
+
+                    filter.classList.add(
+                        'btn-outline-secondary'
+                    );
+
+                }
+            );
 
 
-        updateTable();
-    });
+            this.classList.add(
+                'active'
+            );
+
+            this.classList.remove(
+                'btn-outline-secondary'
+            );
+
+            this.classList.add(
+                'btn-primary'
+            );
+
+
+            updateTable();
+
+        }
+    );
 
 });
 
@@ -1078,7 +1458,7 @@ updateTable();
 
 /*
 |--------------------------------------------------------------------------
-| Delete confirmation
+| Delete Confirmation
 |--------------------------------------------------------------------------
 */
 
@@ -1090,6 +1470,7 @@ function confirmDelete(name) {
         '"?\n\nThis action cannot be undone.'
     );
 }
+
 </script>
 
 </body>

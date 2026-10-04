@@ -1,4 +1,3 @@
-
 <?php
 
 session_start();
@@ -14,6 +13,7 @@ if (
 }
 
 require_once '../../config/database.php';
+require_once '../../includes/AuditLogger.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -233,6 +233,40 @@ try {
 
     $conn->commit();
 
+    /*
+     |--------------------------------------------------------------------------
+     | Audit Log
+     |--------------------------------------------------------------------------
+     */
+
+    try {
+        AuditLogger::log(
+            $conn,
+            'ACADEMIC_YEAR_ACTIVATED',
+            'Activated an academic year and reset its semesters.',
+            'academic_year',
+            (string) $academicYearId,
+            [
+                'academic_year_id' => $academicYearId,
+                'name' => $academicYear['name'],
+                'status' => $academicYear['status']
+            ],
+            [
+                'academic_year_id' => $academicYearId,
+                'name' => $academicYear['name'],
+                'status' => 'Active',
+                'active_semester' => 'Mid Semester'
+            ]
+        );
+    } catch (Throwable $auditException) {
+        error_log(
+            'AuditLogger ACADEMIC_YEAR_ACTIVATED failed for academic year ID ' .
+            $academicYearId .
+            ': ' .
+            $auditException->getMessage()
+        );
+    }
+
     $_SESSION['success_message'] =
         "Academic year {$academicYear['name']} is now active. Mid Semester is now the active semester.";
 
@@ -261,4 +295,3 @@ try {
     exit;
 }
 ?>
-

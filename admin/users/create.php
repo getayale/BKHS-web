@@ -21,6 +21,7 @@ if (
 }
 
 require_once '../../config/database.php';
+require_once '../../includes/AuditLogger.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -47,9 +48,6 @@ $role = '';
 |--------------------------------------------------------------------------
 | Signature Roles
 |--------------------------------------------------------------------------
-|
-| All staff/system users can have a signature.
-|
 */
 
 $signatureRoles = [
@@ -88,12 +86,6 @@ function saveDrawnSignature(
         return null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Validate PNG Data URL
-    |--------------------------------------------------------------------------
-    */
-
     if (
         !preg_match(
             '/^data:image\/png;base64,(.+)$/',
@@ -113,12 +105,6 @@ function saveDrawnSignature(
         return null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Validate PNG
-    |--------------------------------------------------------------------------
-    */
-
     if (!function_exists('getimagesizefromstring')) {
         return null;
     }
@@ -133,23 +119,11 @@ function saveDrawnSignature(
         return null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Check Directory
-    |--------------------------------------------------------------------------
-    */
-
     if (!is_dir($directory)) {
         if (!@mkdir($directory, 0755, true)) {
             return null;
         }
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Create Filename
-    |--------------------------------------------------------------------------
-    */
 
     try {
         $random = bin2hex(random_bytes(4));
@@ -173,12 +147,6 @@ function saveDrawnSignature(
         ) .
         DIRECTORY_SEPARATOR .
         $filename;
-
-    /*
-    |--------------------------------------------------------------------------
-    | Save File
-    |--------------------------------------------------------------------------
-    */
 
     if (
         file_put_contents(
@@ -218,23 +186,11 @@ function processUploadedSignature(
         return null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Validate File Size
-    |--------------------------------------------------------------------------
-    */
-
     $maxSize = 5 * 1024 * 1024;
 
     if (($file['size'] ?? 0) > $maxSize) {
         return null;
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Validate Image
-    |--------------------------------------------------------------------------
-    */
 
     if (!function_exists('getimagesize')) {
         return null;
@@ -263,12 +219,6 @@ function processUploadedSignature(
         return null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Check GD Functions
-    |--------------------------------------------------------------------------
-    */
-
     if (
         !function_exists('imagecreatetruecolor') ||
         !function_exists('imagecolorallocatealpha') ||
@@ -284,12 +234,6 @@ function processUploadedSignature(
     ) {
         return null;
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Load Image
-    |--------------------------------------------------------------------------
-    */
 
     if ($mime === 'image/png') {
 
@@ -316,12 +260,6 @@ function processUploadedSignature(
         return null;
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Image Dimensions
-    |--------------------------------------------------------------------------
-    */
-
     $width = imagesx($source);
     $height = imagesy($source);
 
@@ -329,12 +267,6 @@ function processUploadedSignature(
         imagedestroy($source);
         return null;
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Create Transparent Output
-    |--------------------------------------------------------------------------
-    */
 
     $output = imagecreatetruecolor(
         $width,
@@ -356,12 +288,6 @@ function processUploadedSignature(
         true
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Fully Transparent Background
-    |--------------------------------------------------------------------------
-    */
-
     $transparent = imagecolorallocatealpha(
         $output,
         255,
@@ -382,16 +308,6 @@ function processUploadedSignature(
         true
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Process Each Pixel
-    |--------------------------------------------------------------------------
-    |
-    | White/light pixels become transparent.
-    | Dark signature pixels remain visible.
-    |
-    */
-
     for ($y = 0; $y < $height; $y++) {
 
         for ($x = 0; $x < $width; $x++) {
@@ -406,22 +322,10 @@ function processUploadedSignature(
             $green = ($rgb >> 8) & 0xFF;
             $blue = $rgb & 0xFF;
 
-            /*
-            |--------------------------------------------------------------------------
-            | Calculate Brightness
-            |--------------------------------------------------------------------------
-            */
-
             $brightness =
                 0.299 * $red +
                 0.587 * $green +
                 0.114 * $blue;
-
-            /*
-            |--------------------------------------------------------------------------
-            | White Background
-            |--------------------------------------------------------------------------
-            */
 
             if ($brightness >= 245) {
 
@@ -433,12 +337,6 @@ function processUploadedSignature(
                 );
 
             } elseif ($brightness >= 180) {
-
-                /*
-                |--------------------------------------------------------------------------
-                | Light Gray Pixels
-                |--------------------------------------------------------------------------
-                */
 
                 $alpha = (int) (
                     127 -
@@ -473,12 +371,6 @@ function processUploadedSignature(
 
             } else {
 
-                /*
-                |--------------------------------------------------------------------------
-                | Dark Signature Pixels
-                |--------------------------------------------------------------------------
-                */
-
                 $color = imagecolorallocatealpha(
                     $output,
                     $red,
@@ -497,26 +389,16 @@ function processUploadedSignature(
         }
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Ensure Directory Exists
-    |--------------------------------------------------------------------------
-    */
-
     if (!is_dir($directory)) {
 
         if (!@mkdir($directory, 0755, true)) {
+
             imagedestroy($source);
             imagedestroy($output);
+
             return null;
         }
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Create Filename
-    |--------------------------------------------------------------------------
-    */
 
     try {
         $random = bin2hex(random_bytes(4));
@@ -540,12 +422,6 @@ function processUploadedSignature(
         ) .
         DIRECTORY_SEPARATOR .
         $filename;
-
-    /*
-    |--------------------------------------------------------------------------
-    | Save PNG
-    |--------------------------------------------------------------------------
-    */
 
     $saved = imagepng(
         $output,
@@ -725,15 +601,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     |--------------------------------------------------------------------------
     | Signature Validation
     |--------------------------------------------------------------------------
-    |
-    | Signature is available for:
-    |
-    | Admin
-    | Principal
-    | Teacher
-    | Registrar
-    | Librarian
-    |
     */
 
     if (
@@ -776,7 +643,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors[] =
                         'The signature image could not be uploaded.';
                 }
-
             }
         }
     }
@@ -851,9 +717,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
 
         $is_logged_in = 0;
-
         $signature_path = null;
-
         $stmt = null;
 
         try {
@@ -895,7 +759,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (int) $conn->insert_id;
 
             $stmt->close();
-
             $stmt = null;
 
             /*
@@ -974,10 +837,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute();
 
                     $stmt->close();
-
                     $stmt = null;
                 }
             }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Audit Log
+            |--------------------------------------------------------------------------
+            |
+            | IMPORTANT:
+            | Password and password hash are intentionally NOT logged.
+            |
+            */
+
+            AuditLogger::log(
+                $conn,
+                'USER_CREATED',
+                'Created a new user account: ' .
+                    $full_name .
+                    ' (' .
+                    $role .
+                    ')',
+                'user',
+                (string) $userId,
+                null,
+                [
+                    'user_id' => $userId,
+                    'full_name' => $full_name,
+                    'email' => $email,
+                    'phone' => $phone,
+                    'role' => $role,
+                    'signature_path' => $signature_path
+                ]
+            );
 
             /*
             |--------------------------------------------------------------------------
@@ -1002,6 +895,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (
                 $stmt instanceof mysqli_stmt
             ) {
+
                 $stmt->close();
             }
 
@@ -1054,361 +948,357 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 ?>
 
 <!DOCTYPE html>
+
 <html lang="en">
 
 <head>
 
-    <meta charset="UTF-8">
+```
+<meta charset="UTF-8">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
-    <title>Create User | Admin</title>
+<title>Create User | Admin</title>
 
-    <!-- Favicon -->
-    <link
-        rel="icon"
-        type="image/webp"
-        href="/BKHS/public/logo.webp?v=1"
-    >
+<link
+    rel="icon"
+    type="image/webp"
+    href="/BKHS/public/logo.webp?v=1"
+>
 
-    <link
-        rel="shortcut icon"
-        type="image/webp"
-        href="/BKHS/public/logo.webp?v=1"
-    >
+<link
+    rel="shortcut icon"
+    type="image/webp"
+    href="/BKHS/public/logo.webp?v=1"
+>
 
-    <link
-        rel="apple-touch-icon"
-        href="/BKHS/public/logo.webp?v=1"
-    >
+<link
+    rel="apple-touch-icon"
+    href="/BKHS/public/logo.webp?v=1"
+>
 
-    <link
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-        rel="stylesheet"
-    >
+<link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+>
 
-    <link
-        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
-        rel="stylesheet"
-    >
+<link
+    href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+    rel="stylesheet"
+>
 
-    <link
-        rel="stylesheet"
-        href="../../public/css/admin-users.css"
-    >
+<link
+    rel="stylesheet"
+    href="../../public/css/admin-users.css"
+>
 
-    <style>
+<style>
 
-        .form-page {
-            max-width: 1000px;
-            margin: 0 auto;
-        }
+    .form-page {
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+
+    .form-card {
+        background: #fff;
+        border: 1px solid #e8ebf0;
+        border-radius: 18px;
+        padding: 28px;
+        box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .form-section {
+        margin-bottom: 30px;
+    }
+
+    .form-section:last-child {
+        margin-bottom: 0;
+    }
+
+    .form-section-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+        font-size: 17px;
+        font-weight: 700;
+        color: #172033;
+    }
+
+    .form-section-title i {
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        background: #eef4ff;
+        color: #2563eb;
+    }
+
+    .form-label {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+    }
+
+    .form-control,
+    .form-select {
+        min-height: 48px;
+        border-radius: 10px;
+        border: 1px solid #d9dee7;
+    }
+
+    .form-control:focus,
+    .form-select:focus {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+    }
+
+    .password-wrapper {
+        position: relative;
+    }
+
+    .password-wrapper .form-control {
+        padding-right: 48px;
+    }
+
+    .password-toggle {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        border: 0;
+        background: transparent;
+        color: #64748b;
+    }
+
+    .form-help {
+        font-size: 13px;
+        color: #6b7280;
+        margin-top: 6px;
+    }
+
+    .required {
+        color: #dc2626;
+    }
+
+    .form-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        padding-top: 24px;
+        border-top: 1px solid #edf0f4;
+    }
+
+    .signature-section {
+        display: none;
+    }
+
+    .signature-methods {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+    }
+
+    .signature-method {
+        position: relative;
+    }
+
+    .signature-method input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .signature-method label {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 11px 16px;
+        border: 1px solid #d9dee7;
+        border-radius: 10px;
+        background: #fff;
+        color: #475569;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .signature-method label:hover {
+        border-color: #2563eb;
+        color: #2563eb;
+    }
+
+    .signature-method input:checked + label {
+        border-color: #2563eb;
+        background: #eef4ff;
+        color: #2563eb;
+    }
+
+    .signature-panel {
+        display: none;
+    }
+
+    .signature-panel.active {
+        display: block;
+    }
+
+    .signature-pad-wrapper {
+        position: relative;
+        width: 100%;
+        border: 1px solid #d9dee7;
+        border-radius: 12px;
+        background: #fff;
+        overflow: hidden;
+    }
+
+    #signatureCanvas {
+        display: block;
+        width: 100%;
+        height: 220px;
+        cursor: crosshair;
+        touch-action: none;
+        background: #fff;
+    }
+
+    .signature-pad-label {
+        position: absolute;
+        top: 12px;
+        left: 15px;
+        color: #94a3b8;
+        font-size: 13px;
+        pointer-events: none;
+    }
+
+    .signature-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+    }
+
+    .signature-upload-box {
+        border: 2px dashed #d9dee7;
+        border-radius: 12px;
+        padding: 30px;
+        text-align: center;
+        background: #f8fafc;
+    }
+
+    .signature-upload-box i {
+        font-size: 34px;
+        color: #64748b;
+    }
+
+    .signature-upload-box p {
+        margin: 8px 0 14px;
+        color: #64748b;
+        font-size: 14px;
+    }
+
+    .signature-preview {
+        display: none;
+        margin-top: 15px;
+        padding: 15px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background:
+            linear-gradient(
+                45deg,
+                #f1f5f9 25%,
+                transparent 25%
+            ),
+            linear-gradient(
+                -45deg,
+                #f1f5f9 25%,
+                transparent 25%
+            ),
+            linear-gradient(
+                45deg,
+                transparent 75%,
+                #f1f5f9 75%
+            ),
+            linear-gradient(
+                -45deg,
+                transparent 75%,
+                #f1f5f9 75%
+            );
+        background-size: 20px 20px;
+        background-position:
+            0 0,
+            0 10px,
+            10px -10px,
+            -10px 0;
+    }
+
+    .signature-preview img {
+        max-width: 100%;
+        max-height: 160px;
+        display: block;
+        margin: 0 auto;
+    }
+
+    .signature-note {
+        font-size: 13px;
+        color: #64748b;
+        margin-top: 8px;
+    }
+
+    .signature-role-note {
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        color: #64748b;
+        font-size: 13px;
+        margin-bottom: 18px;
+    }
+
+    @media (max-width: 576px) {
 
         .form-card {
-            background: #fff;
-            border: 1px solid #e8ebf0;
-            border-radius: 18px;
-            padding: 28px;
-            box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
-        }
-
-        .form-section {
-            margin-bottom: 30px;
-        }
-
-        .form-section:last-child {
-            margin-bottom: 0;
-        }
-
-        .form-section-title {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 20px;
-            font-size: 17px;
-            font-weight: 700;
-            color: #172033;
-        }
-
-        .form-section-title i {
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 10px;
-            background: #eef4ff;
-            color: #2563eb;
-        }
-
-        .form-label {
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 8px;
-        }
-
-        .form-control,
-        .form-select {
-            min-height: 48px;
-            border-radius: 10px;
-            border: 1px solid #d9dee7;
-        }
-
-        .form-control:focus,
-        .form-select:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
-        }
-
-        .password-wrapper {
-            position: relative;
-        }
-
-        .password-wrapper .form-control {
-            padding-right: 48px;
-        }
-
-        .password-toggle {
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            border: 0;
-            background: transparent;
-            color: #64748b;
-        }
-
-        .form-help {
-            font-size: 13px;
-            color: #6b7280;
-            margin-top: 6px;
-        }
-
-        .required {
-            color: #dc2626;
+            padding: 20px;
+            border-radius: 14px;
         }
 
         .form-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 12px;
-            padding-top: 24px;
-            border-top: 1px solid #edf0f4;
+            flex-direction: column-reverse;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Signature
-        |--------------------------------------------------------------------------
-        */
-
-        .signature-section {
-            display: none;
-        }
-
-        .signature-methods {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            margin-bottom: 18px;
-        }
-
-        .signature-method {
-            position: relative;
-        }
-
-        .signature-method input {
-            position: absolute;
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .signature-method label {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            padding: 11px 16px;
-            border: 1px solid #d9dee7;
-            border-radius: 10px;
-            background: #fff;
-            color: #475569;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .signature-method label:hover {
-            border-color: #2563eb;
-            color: #2563eb;
-        }
-
-        .signature-method input:checked + label {
-            border-color: #2563eb;
-            background: #eef4ff;
-            color: #2563eb;
-        }
-
-        .signature-panel {
-            display: none;
-        }
-
-        .signature-panel.active {
-            display: block;
-        }
-
-        .signature-pad-wrapper {
-            position: relative;
+        .form-actions .btn {
             width: 100%;
-            border: 1px solid #d9dee7;
-            border-radius: 12px;
-            background: #fff;
-            overflow: hidden;
         }
 
         #signatureCanvas {
-            display: block;
-            width: 100%;
-            height: 220px;
-            cursor: crosshair;
-            touch-action: none;
-            background: #fff;
+            height: 180px;
         }
 
-        .signature-pad-label {
-            position: absolute;
-            top: 12px;
-            left: 15px;
-            color: #94a3b8;
-            font-size: 13px;
-            pointer-events: none;
+        .signature-methods {
+            flex-direction: column;
+        }
+
+        .signature-method label {
+            width: 100%;
         }
 
         .signature-actions {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-            margin-top: 10px;
+            flex-direction: column;
+            align-items: stretch;
         }
 
-        .signature-upload-box {
-            border: 2px dashed #d9dee7;
-            border-radius: 12px;
-            padding: 30px;
-            text-align: center;
-            background: #f8fafc;
+        .signature-actions .btn {
+            width: 100%;
         }
+    }
 
-        .signature-upload-box i {
-            font-size: 34px;
-            color: #64748b;
-        }
-
-        .signature-upload-box p {
-            margin: 8px 0 14px;
-            color: #64748b;
-            font-size: 14px;
-        }
-
-        .signature-preview {
-            display: none;
-            margin-top: 15px;
-            padding: 15px;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            background:
-                linear-gradient(
-                    45deg,
-                    #f1f5f9 25%,
-                    transparent 25%
-                ),
-                linear-gradient(
-                    -45deg,
-                    #f1f5f9 25%,
-                    transparent 25%
-                ),
-                linear-gradient(
-                    45deg,
-                    transparent 75%,
-                    #f1f5f9 75%
-                ),
-                linear-gradient(
-                    -45deg,
-                    transparent 75%,
-                    #f1f5f9 75%
-                );
-            background-size: 20px 20px;
-            background-position:
-                0 0,
-                0 10px,
-                10px -10px,
-                -10px 0;
-        }
-
-        .signature-preview img {
-            max-width: 100%;
-            max-height: 160px;
-            display: block;
-            margin: 0 auto;
-        }
-
-        .signature-note {
-            font-size: 13px;
-            color: #64748b;
-            margin-top: 8px;
-        }
-
-        .signature-role-note {
-            padding: 12px 14px;
-            border-radius: 10px;
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            color: #64748b;
-            font-size: 13px;
-            margin-bottom: 18px;
-        }
-
-        @media (max-width: 576px) {
-
-            .form-card {
-                padding: 20px;
-                border-radius: 14px;
-            }
-
-            .form-actions {
-                flex-direction: column-reverse;
-            }
-
-            .form-actions .btn {
-                width: 100%;
-            }
-
-            #signatureCanvas {
-                height: 180px;
-            }
-
-            .signature-methods {
-                flex-direction: column;
-            }
-
-            .signature-method label {
-                width: 100%;
-            }
-
-            .signature-actions {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .signature-actions .btn {
-                width: 100%;
-            }
-        }
-
-    </style>
+</style>
+```
 
 </head>
 
@@ -1416,179 +1306,324 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 <div class="admin-layout">
 
-    <!-- Sidebar -->
+```
+<aside class="admin-sidebar">
 
-    <aside class="admin-sidebar">
+    <div class="sidebar-brand">
 
-        <div class="sidebar-brand">
+        <div class="brand-mark">
+            <i class="bi bi-mortarboard-fill"></i>
+        </div>
 
-            <div class="brand-mark">
-                <i class="bi bi-mortarboard-fill"></i>
-            </div>
+        <div class="brand-text">
+            <strong>BKHS</strong>
+            <span>School Management</span>
+        </div>
 
-            <div class="brand-text">
-                <strong>BKHS</strong>
-                <span>School Management</span>
+    </div>
+
+    <nav class="sidebar-nav">
+
+        <div class="nav-section-title">
+            Main
+        </div>
+
+        <a
+            href="../dashboard.php"
+            class="sidebar-link"
+        >
+            <i class="bi bi-grid-1x2-fill"></i>
+            <span>Dashboard</span>
+        </a>
+
+        <a
+            href="index.php"
+            class="sidebar-link active"
+        >
+            <i class="bi bi-people"></i>
+            <span>Users</span>
+        </a>
+
+        <a
+            href="../students/index.php"
+            class="sidebar-link"
+        >
+            <i class="bi bi-mortarboard"></i>
+            <span>Students</span>
+        </a>
+
+        <a
+            href="../teachers/index.php"
+            class="sidebar-link"
+        >
+            <i class="bi bi-person-workspace"></i>
+            <span>Teachers</span>
+        </a>
+
+    </nav>
+
+    <div class="sidebar-footer">
+
+        <a
+            href="../../auth/logout.php"
+            class="sidebar-link logout-link"
+        >
+            <i class="bi bi-box-arrow-right"></i>
+            <span>Logout</span>
+        </a>
+
+    </div>
+
+</aside>
+
+<div class="sidebar-overlay"></div>
+
+<main class="admin-main">
+
+    <header class="admin-topbar">
+
+        <div class="topbar-left">
+
+            <button
+                type="button"
+                class="mobile-menu-button"
+                id="mobileMenuButton"
+            >
+                <i class="bi bi-list"></i>
+            </button>
+
+            <div>
+
+                <h1 class="topbar-title">
+                    Create User
+                </h1>
+
+                <p class="mb-0 text-muted">
+                    Add a new staff or system user
+                </p>
+
             </div>
 
         </div>
 
-        <nav class="sidebar-nav">
+        <div class="topbar-actions">
 
-            <div class="nav-section-title">
-                Main
-            </div>
+            <div class="admin-profile">
 
-            <a
-                href="../dashboard.php"
-                class="sidebar-link"
-            >
-                <i class="bi bi-grid-1x2-fill"></i>
-                <span>Dashboard</span>
-            </a>
+                <div class="profile-avatar">
 
-            <a
-                href="index.php"
-                class="sidebar-link active"
-            >
-                <i class="bi bi-people"></i>
-                <span>Users</span>
-            </a>
-
-            <a
-                href="../students/index.php"
-                class="sidebar-link"
-            >
-                <i class="bi bi-mortarboard"></i>
-                <span>Students</span>
-            </a>
-
-            <a
-                href="../teachers/index.php"
-                class="sidebar-link"
-            >
-                <i class="bi bi-person-workspace"></i>
-                <span>Teachers</span>
-            </a>
-
-        </nav>
-
-        <div class="sidebar-footer">
-
-            <a
-                href="../../auth/logout.php"
-                class="sidebar-link logout-link"
-            >
-                <i class="bi bi-box-arrow-right"></i>
-                <span>Logout</span>
-            </a>
-
-        </div>
-
-    </aside>
-
-    <div class="sidebar-overlay"></div>
-
-    <!-- Main -->
-
-    <main class="admin-main">
-
-        <header class="admin-topbar">
-
-            <div class="topbar-left">
-
-                <button
-                    type="button"
-                    class="mobile-menu-button"
-                    id="mobileMenuButton"
-                >
-                    <i class="bi bi-list"></i>
-                </button>
-
-                <div>
-
-                    <h1 class="topbar-title">
-                        Create User
-                    </h1>
-
-                    <p class="mb-0 text-muted">
-                        Add a new staff or system user
-                    </p>
-
-                </div>
-
-            </div>
-
-            <div class="topbar-actions">
-
-                <div class="admin-profile">
-
-                    <div class="profile-avatar">
-
-                        <?= htmlspecialchars(
-                            strtoupper(
-                                substr(
-                                    $_SESSION['full_name'] ?? 'A',
-                                    0,
-                                    1
-                                )
+                    <?= htmlspecialchars(
+                        strtoupper(
+                            substr(
+                                $_SESSION['full_name'] ?? 'A',
+                                0,
+                                1
                             )
+                        )
+                    ) ?>
+
+                </div>
+
+                <div class="profile-info">
+
+                    <strong>
+                        <?= htmlspecialchars(
+                            $_SESSION['full_name'] ?? 'Admin'
                         ) ?>
+                    </strong>
 
-                    </div>
-
-                    <div class="profile-info">
-
-                        <strong>
-                            <?= htmlspecialchars(
-                                $_SESSION['full_name'] ?? 'Admin'
-                            ) ?>
-                        </strong>
-
-                        <span>
-                            Administrator
-                        </span>
-
-                    </div>
+                    <span>
+                        Administrator
+                    </span>
 
                 </div>
 
             </div>
 
-        </header>
+        </div>
 
-        <section class="admin-content">
+    </header>
 
-            <div class="form-page">
+    <section class="admin-content">
 
-                <?php if (!empty($errors)): ?>
+        <div class="form-page">
 
-                    <div
-                        class="alert alert-danger border-0 shadow-sm"
-                        role="alert"
-                    >
+            <?php if (!empty($errors)): ?>
 
-                        <div class="d-flex gap-2">
+                <div
+                    class="alert alert-danger border-0 shadow-sm"
+                    role="alert"
+                >
 
-                            <i class="bi bi-exclamation-triangle-fill"></i>
+                    <div class="d-flex gap-2">
 
-                            <div>
+                        <i class="bi bi-exclamation-triangle-fill"></i>
 
-                                <strong>
-                                    Please fix the following:
-                                </strong>
+                        <div>
 
-                                <ul class="mb-0 mt-2">
+                            <strong>
+                                Please fix the following:
+                            </strong>
 
-                                    <?php foreach ($errors as $error): ?>
+                            <ul class="mb-0 mt-2">
 
-                                        <li>
-                                            <?= htmlspecialchars($error) ?>
-                                        </li>
+                                <?php foreach ($errors as $error): ?>
+
+                                    <li>
+                                        <?= htmlspecialchars($error) ?>
+                                    </li>
+
+                                <?php endforeach; ?>
+
+                            </ul>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            <?php endif; ?>
+
+            <div class="form-card">
+
+                <form
+                    method="POST"
+                    enctype="multipart/form-data"
+                    novalidate
+                    id="createUserForm"
+                >
+
+                    <div class="form-section">
+
+                        <div class="form-section-title">
+
+                            <i class="bi bi-person"></i>
+
+                            <span>
+                                Personal Information
+                            </span>
+
+                        </div>
+
+                        <div class="row g-4">
+
+                            <div class="col-12">
+
+                                <label class="form-label">
+
+                                    Full Name
+
+                                    <span class="required">
+                                        *
+                                    </span>
+
+                                </label>
+
+                                <input
+                                    type="text"
+                                    name="full_name"
+                                    class="form-control"
+                                    value="<?= htmlspecialchars($full_name) ?>"
+                                    placeholder="Enter full name"
+                                    required
+                                >
+
+                            </div>
+
+                            <div class="col-md-6">
+
+                                <label class="form-label">
+
+                                    Email
+
+                                    <span class="required">
+                                        *
+                                    </span>
+
+                                </label>
+
+                                <input
+                                    type="email"
+                                    name="email"
+                                    class="form-control"
+                                    value="<?= htmlspecialchars($email) ?>"
+                                    placeholder="example@email.com"
+                                    required
+                                >
+
+                            </div>
+
+                            <div class="col-md-6">
+
+                                <label class="form-label">
+
+                                    Phone Number
+
+                                    <span class="required">
+                                        *
+                                    </span>
+
+                                </label>
+
+                                <input
+                                    type="tel"
+                                    name="phone"
+                                    class="form-control"
+                                    value="<?= htmlspecialchars($phone) ?>"
+                                    placeholder="0912345678"
+                                    pattern="09[0-9]{8}"
+                                    maxlength="10"
+                                    minlength="10"
+                                    inputmode="numeric"
+                                    required
+                                >
+
+                                <div class="form-help">
+                                    Must be 10 digits and start with 09.
+                                </div>
+
+                            </div>
+
+                            <div class="col-12">
+
+                                <label class="form-label">
+
+                                    Role
+
+                                    <span class="required">
+                                        *
+                                    </span>
+
+                                </label>
+
+                                <select
+                                    name="role"
+                                    id="role"
+                                    class="form-select"
+                                    required
+                                >
+
+                                    <option value="">
+                                        Select role
+                                    </option>
+
+                                    <?php foreach ($roles as $item): ?>
+
+                                        <option
+                                            value="<?= htmlspecialchars($item) ?>"
+                                            <?= $role === $item ? 'selected' : '' ?>
+                                        >
+                                            <?= htmlspecialchars($item) ?>
+                                        </option>
 
                                     <?php endforeach; ?>
 
-                                </ul>
+                                </select>
+
+                                <div class="form-help">
+                                    Student and Parent accounts are managed by the Registrar.
+                                </div>
 
                             </div>
 
@@ -1596,291 +1631,276 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                     </div>
 
-                <?php endif; ?>
-
-                <div class="form-card">
-
-                    <form
-                        method="POST"
-                        enctype="multipart/form-data"
-                        novalidate
-                        id="createUserForm"
+                    <div
+                        class="form-section signature-section"
+                        id="signatureSection"
                     >
 
-                        <!-- Personal Information -->
+                        <div class="form-section-title">
 
-                        <div class="form-section">
+                            <i class="bi bi-pen"></i>
 
-                            <div class="form-section-title">
+                            <span>
+                                Signature
+                            </span>
 
-                                <i class="bi bi-person"></i>
+                        </div>
 
-                                <span>
-                                    Personal Information
-                                </span>
+                        <div class="form-help mb-3">
+
+                            Add the user's signature for report cards,
+                            certificates, attendance documents,
+                            and other official school documents.
+
+                        </div>
+
+                        <div class="signature-role-note">
+
+                            <i class="bi bi-info-circle me-1"></i>
+
+                            Signature is available for
+                            <strong>Admin</strong>,
+                            <strong>Principal</strong>,
+                            <strong>Teacher</strong>,
+                            <strong>Registrar</strong>, and
+                            <strong>Librarian</strong> accounts.
+
+                        </div>
+
+                        <input
+                            type="hidden"
+                            name="signature_method"
+                            id="signatureMethod"
+                            value="none"
+                        >
+
+                        <input
+                            type="hidden"
+                            name="drawn_signature"
+                            id="drawnSignature"
+                            value=""
+                        >
+
+                        <div class="signature-methods">
+
+                            <div class="signature-method">
+
+                                <input
+                                    type="radio"
+                                    name="signature_choice"
+                                    id="drawSignatureChoice"
+                                    value="draw"
+                                >
+
+                                <label
+                                    for="drawSignatureChoice"
+                                >
+
+                                    <i class="bi bi-pencil"></i>
+
+                                    Draw Signature
+
+                                </label>
 
                             </div>
 
-                            <div class="row g-4">
+                            <div class="signature-method">
 
-                                <div class="col-12">
+                                <input
+                                    type="radio"
+                                    name="signature_choice"
+                                    id="uploadSignatureChoice"
+                                    value="upload"
+                                >
 
-                                    <label class="form-label">
+                                <label
+                                    for="uploadSignatureChoice"
+                                >
 
-                                        Full Name
+                                    <i class="bi bi-upload"></i>
 
-                                        <span class="required">
-                                            *
-                                        </span>
+                                    Upload Signature
 
-                                    </label>
-
-                                    <input
-                                        type="text"
-                                        name="full_name"
-                                        class="form-control"
-                                        value="<?= htmlspecialchars($full_name) ?>"
-                                        placeholder="Enter full name"
-                                        required
-                                    >
-
-                                </div>
-
-                                <div class="col-md-6">
-
-                                    <label class="form-label">
-
-                                        Email
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    </label>
-
-                                    <input
-                                        type="email"
-                                        name="email"
-                                        class="form-control"
-                                        value="<?= htmlspecialchars($email) ?>"
-                                        placeholder="example@email.com"
-                                        required
-                                    >
-
-                                </div>
-
-                                <div class="col-md-6">
-
-                                    <label class="form-label">
-
-                                        Phone Number
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    </label>
-
-                                    <input
-                                        type="tel"
-                                        name="phone"
-                                        class="form-control"
-                                        value="<?= htmlspecialchars($phone) ?>"
-                                        placeholder="0912345678"
-                                        pattern="09[0-9]{8}"
-                                        maxlength="10"
-                                        minlength="10"
-                                        inputmode="numeric"
-                                        required
-                                    >
-
-                                    <div class="form-help">
-                                        Must be 10 digits and start with 09.
-                                    </div>
-
-                                </div>
-
-                                <div class="col-12">
-
-                                    <label class="form-label">
-
-                                        Role
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    </label>
-
-                                    <select
-                                        name="role"
-                                        id="role"
-                                        class="form-select"
-                                        required
-                                    >
-
-                                        <option value="">
-                                            Select role
-                                        </option>
-
-                                        <?php foreach ($roles as $item): ?>
-
-                                            <option
-                                                value="<?= htmlspecialchars($item) ?>"
-                                                <?= $role === $item ? 'selected' : '' ?>
-                                            >
-                                                <?= htmlspecialchars($item) ?>
-                                            </option>
-
-                                        <?php endforeach; ?>
-
-                                    </select>
-
-                                    <div class="form-help">
-                                        Student and Parent accounts are managed by the Registrar.
-                                    </div>
-
-                                </div>
+                                </label>
 
                             </div>
 
                         </div>
 
-                        <!-- Signature -->
-
                         <div
-                            class="form-section signature-section"
-                            id="signatureSection"
+                            class="signature-panel"
+                            id="drawPanel"
                         >
 
-                            <div class="form-section-title">
+                            <div class="signature-pad-wrapper">
 
-                                <i class="bi bi-pen"></i>
-
-                                <span>
-                                    Signature
+                                <span class="signature-pad-label">
+                                    Sign here
                                 </span>
 
-                            </div>
-
-                            <div class="form-help mb-3">
-
-                                Add the user's signature for report cards,
-                                certificates, attendance documents,
-                                and other official school documents.
+                                <canvas
+                                    id="signatureCanvas"
+                                ></canvas>
 
                             </div>
 
-                            <div class="signature-role-note">
+                            <div class="signature-actions">
 
-                                <i class="bi bi-info-circle me-1"></i>
+                                <span class="signature-note">
+                                    Use your mouse, touchscreen,
+                                    or stylus.
+                                </span>
 
-                                Signature is available for
-                                <strong>Admin</strong>,
-                                <strong>Principal</strong>,
-                                <strong>Teacher</strong>,
-                                <strong>Registrar</strong>, and
-                                <strong>Librarian</strong> accounts.
+                                <button
+                                    type="button"
+                                    class="btn btn-light border"
+                                    id="clearSignature"
+                                >
+
+                                    <i class="bi bi-eraser me-1"></i>
+
+                                    Clear
+
+                                </button>
 
                             </div>
 
-                            <input
-                                type="hidden"
-                                name="signature_method"
-                                id="signatureMethod"
-                                value="none"
-                            >
+                        </div>
 
-                            <input
-                                type="hidden"
-                                name="drawn_signature"
-                                id="drawnSignature"
-                                value=""
-                            >
+                        <div
+                            class="signature-panel"
+                            id="uploadPanel"
+                        >
 
-                            <div class="signature-methods">
+                            <div class="signature-upload-box">
 
-                                <div class="signature-method">
+                                <i class="bi bi-image"></i>
 
-                                    <input
-                                        type="radio"
-                                        name="signature_choice"
-                                        id="drawSignatureChoice"
-                                        value="draw"
-                                    >
+                                <p>
+                                    Upload a clear signature image.
+                                </p>
 
-                                    <label
-                                        for="drawSignatureChoice"
-                                    >
+                                <input
+                                    type="file"
+                                    name="signature_image"
+                                    id="signatureImage"
+                                    class="form-control"
+                                    accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                                >
 
-                                        <i class="bi bi-pencil"></i>
+                                <div class="signature-note">
 
-                                        Draw Signature
-
-                                    </label>
-
-                                </div>
-
-                                <div class="signature-method">
-
-                                    <input
-                                        type="radio"
-                                        name="signature_choice"
-                                        id="uploadSignatureChoice"
-                                        value="upload"
-                                    >
-
-                                    <label
-                                        for="uploadSignatureChoice"
-                                    >
-
-                                        <i class="bi bi-upload"></i>
-
-                                        Upload Signature
-
-                                    </label>
+                                    JPG or PNG, maximum 5 MB.
+                                    White backgrounds will be removed automatically.
 
                                 </div>
 
                             </div>
-
-                            <!-- Draw Signature -->
 
                             <div
-                                class="signature-panel"
-                                id="drawPanel"
+                                class="signature-preview"
+                                id="signaturePreview"
                             >
 
-                                <div class="signature-pad-wrapper">
+                                <img
+                                    id="signaturePreviewImage"
+                                    src=""
+                                    alt="Signature preview"
+                                >
 
-                                    <span class="signature-pad-label">
-                                        Sign here
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                    <div class="form-section">
+
+                        <div class="form-section-title">
+
+                            <i class="bi bi-shield-lock"></i>
+
+                            <span>
+                                Account Security
+                            </span>
+
+                        </div>
+
+                        <div class="row g-4">
+
+                            <div class="col-md-6">
+
+                                <label class="form-label">
+
+                                    Password
+
+                                    <span class="required">
+                                        *
                                     </span>
 
-                                    <canvas
-                                        id="signatureCanvas"
-                                    ></canvas>
+                                </label>
 
-                                </div>
+                                <div class="password-wrapper">
 
-                                <div class="signature-actions">
-
-                                    <span class="signature-note">
-
-                                        Use your mouse, touchscreen,
-                                        or stylus.
-
-                                    </span>
+                                    <input
+                                        type="password"
+                                        name="password"
+                                        id="password"
+                                        class="form-control"
+                                        placeholder="Enter password"
+                                        minlength="6"
+                                        required
+                                    >
 
                                     <button
                                         type="button"
-                                        class="btn btn-light border"
-                                        id="clearSignature"
+                                        class="password-toggle"
+                                        onclick="togglePassword('password', this)"
                                     >
 
-                                        <i class="bi bi-eraser me-1"></i>
+                                        <i class="bi bi-eye"></i>
 
-                                        Clear
+                                    </button>
+
+                                </div>
+
+                                <div class="form-help">
+                                    Password must be at least 6 characters.
+                                </div>
+
+                            </div>
+
+                            <div class="col-md-6">
+
+                                <label class="form-label">
+
+                                    Confirm Password
+
+                                    <span class="required">
+                                        *
+                                    </span>
+
+                                </label>
+
+                                <div class="password-wrapper">
+
+                                    <input
+                                        type="password"
+                                        name="confirm_password"
+                                        id="confirm_password"
+                                        class="form-control"
+                                        placeholder="Confirm password"
+                                        minlength="6"
+                                        required
+                                    >
+
+                                    <button
+                                        type="button"
+                                        class="password-toggle"
+                                        onclick="togglePassword('confirm_password', this)"
+                                    >
+
+                                        <i class="bi bi-eye"></i>
 
                                     </button>
 
@@ -1888,198 +1908,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                             </div>
 
-                            <!-- Upload Signature -->
-
-                            <div
-                                class="signature-panel"
-                                id="uploadPanel"
-                            >
-
-                                <div class="signature-upload-box">
-
-                                    <i class="bi bi-image"></i>
-
-                                    <p>
-                                        Upload a clear signature image.
-                                    </p>
-
-                                    <input
-                                        type="file"
-                                        name="signature_image"
-                                        id="signatureImage"
-                                        class="form-control"
-                                        accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                                    >
-
-                                    <div class="signature-note">
-
-                                        JPG or PNG, maximum 5 MB.
-                                        White backgrounds will be removed automatically.
-
-                                    </div>
-
-                                </div>
-
-                                <div
-                                    class="signature-preview"
-                                    id="signaturePreview"
-                                >
-
-                                    <img
-                                        id="signaturePreviewImage"
-                                        src=""
-                                        alt="Signature preview"
-                                    >
-
-                                </div>
-
-                            </div>
-
                         </div>
 
-                        <!-- Security -->
+                    </div>
 
-                        <div class="form-section">
+                    <div class="form-actions">
 
-                            <div class="form-section-title">
+                        <a
+                            href="index.php"
+                            class="btn btn-light border px-4"
+                        >
+                            Cancel
+                        </a>
 
-                                <i class="bi bi-shield-lock"></i>
+                        <button
+                            type="submit"
+                            class="btn btn-primary px-4"
+                        >
 
-                                <span>
-                                    Account Security
-                                </span>
+                            <i class="bi bi-person-plus me-2"></i>
 
-                            </div>
+                            Create User
 
-                            <div class="row g-4">
+                        </button>
 
-                                <div class="col-md-6">
+                    </div>
 
-                                    <label class="form-label">
-
-                                        Password
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    </label>
-
-                                    <div class="password-wrapper">
-
-                                        <input
-                                            type="password"
-                                            name="password"
-                                            id="password"
-                                            class="form-control"
-                                            placeholder="Enter password"
-                                            minlength="6"
-                                            required
-                                        >
-
-                                        <button
-                                            type="button"
-                                            class="password-toggle"
-                                            onclick="togglePassword('password', this)"
-                                        >
-
-                                            <i class="bi bi-eye"></i>
-
-                                        </button>
-
-                                    </div>
-
-                                    <div class="form-help">
-                                        Password must be at least 6 characters.
-                                    </div>
-
-                                </div>
-
-                                <div class="col-md-6">
-
-                                    <label class="form-label">
-
-                                        Confirm Password
-
-                                        <span class="required">
-                                            *
-                                        </span>
-
-                                    </label>
-
-                                    <div class="password-wrapper">
-
-                                        <input
-                                            type="password"
-                                            name="confirm_password"
-                                            id="confirm_password"
-                                            class="form-control"
-                                            placeholder="Confirm password"
-                                            minlength="6"
-                                            required
-                                        >
-
-                                        <button
-                                            type="button"
-                                            class="password-toggle"
-                                            onclick="togglePassword('confirm_password', this)"
-                                        >
-
-                                            <i class="bi bi-eye"></i>
-
-                                        </button>
-
-                                    </div>
-
-                                </div>
-
-                            </div>
-
-                        </div>
-
-                        <!-- Actions -->
-
-                        <div class="form-actions">
-
-                            <a
-                                href="index.php"
-                                class="btn btn-light border px-4"
-                            >
-                                Cancel
-                            </a>
-
-                            <button
-                                type="submit"
-                                class="btn btn-primary px-4"
-                            >
-
-                                <i class="bi bi-person-plus me-2"></i>
-
-                                Create User
-
-                            </button>
-
-                        </div>
-
-                    </form>
-
-                </div>
+                </form>
 
             </div>
 
-        </section>
+        </div>
 
-    </main>
+    </section>
+
+</main>
+```
 
 </div>
 
 <script>
-
-/*
-|--------------------------------------------------------------------------
-| Password Toggle
-|--------------------------------------------------------------------------
-*/
 
 function togglePassword(id, button) {
 
@@ -2115,12 +1983,6 @@ function togglePassword(id, button) {
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Signature Elements
-|--------------------------------------------------------------------------
-*/
-
 const roleSelect =
     document.getElementById('role');
 
@@ -2144,21 +2006,6 @@ const signatureMethod =
 
 const drawnSignature =
     document.getElementById('drawnSignature');
-
-/*
-|--------------------------------------------------------------------------
-| Signature Visibility
-|--------------------------------------------------------------------------
-|
-| Signature is available for ALL five staff roles:
-|
-| Admin
-| Principal
-| Teacher
-| Registrar
-| Librarian
-|
-*/
 
 function updateSignatureVisibility() {
 
@@ -2211,12 +2058,6 @@ roleSelect.addEventListener(
 
 updateSignatureVisibility();
 
-/*
-|--------------------------------------------------------------------------
-| Canvas Variables
-|--------------------------------------------------------------------------
-*/
-
 const canvas =
     document.getElementById(
         'signatureCanvas'
@@ -2226,14 +2067,7 @@ const ctx =
     canvas.getContext('2d');
 
 let drawing = false;
-
 let hasSignature = false;
-
-/*
-|--------------------------------------------------------------------------
-| Resize Canvas
-|--------------------------------------------------------------------------
-*/
 
 function resizeCanvas() {
 
@@ -2253,12 +2087,6 @@ function resizeCanvas() {
             1
         );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Save Existing Drawing
-    |--------------------------------------------------------------------------
-    */
-
     let existingImage = null;
 
     if (
@@ -2273,12 +2101,6 @@ function resizeCanvas() {
             );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Set Real Canvas Resolution
-    |--------------------------------------------------------------------------
-    */
-
     canvas.width =
         Math.round(
             rect.width * ratio
@@ -2288,12 +2110,6 @@ function resizeCanvas() {
         Math.round(
             rect.height * ratio
         );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Scale Drawing Coordinates
-    |--------------------------------------------------------------------------
-    */
 
     ctx.setTransform(
         ratio,
@@ -2315,12 +2131,6 @@ function resizeCanvas() {
 
     ctx.strokeStyle =
         '#111827';
-
-    /*
-    |--------------------------------------------------------------------------
-    | Restore Existing Drawing
-    |--------------------------------------------------------------------------
-    */
 
     if (existingImage) {
 
@@ -2344,19 +2154,7 @@ function resizeCanvas() {
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Initial Canvas Setup
-|--------------------------------------------------------------------------
-*/
-
 resizeCanvas();
-
-/*
-|--------------------------------------------------------------------------
-| Resize When Window Changes
-|--------------------------------------------------------------------------
-*/
 
 window.addEventListener(
     'resize',
@@ -2364,12 +2162,6 @@ window.addEventListener(
         resizeCanvas();
     }
 );
-
-/*
-|--------------------------------------------------------------------------
-| Draw Signature
-|--------------------------------------------------------------------------
-*/
 
 drawChoice.addEventListener(
     'change',
@@ -2398,12 +2190,6 @@ drawChoice.addEventListener(
     }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Upload Signature
-|--------------------------------------------------------------------------
-*/
-
 uploadChoice.addEventListener(
     'change',
     function () {
@@ -2425,12 +2211,6 @@ uploadChoice.addEventListener(
     }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Get Canvas Position
-|--------------------------------------------------------------------------
-*/
-
 function getCanvasPosition(event) {
 
     const rect =
@@ -2447,12 +2227,6 @@ function getCanvasPosition(event) {
     };
 }
 
-/*
-|--------------------------------------------------------------------------
-| Pointer Down
-|--------------------------------------------------------------------------
-*/
-
 canvas.addEventListener(
     'pointerdown',
     function (event) {
@@ -2460,7 +2234,6 @@ canvas.addEventListener(
         event.preventDefault();
 
         drawing = true;
-
         hasSignature = true;
 
         canvas.setPointerCapture(
@@ -2478,12 +2251,6 @@ canvas.addEventListener(
         );
     }
 );
-
-/*
-|--------------------------------------------------------------------------
-| Pointer Move
-|--------------------------------------------------------------------------
-*/
 
 canvas.addEventListener(
     'pointermove',
@@ -2507,12 +2274,6 @@ canvas.addEventListener(
     }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Stop Drawing
-|--------------------------------------------------------------------------
-*/
-
 function stopDrawing() {
 
     if (!drawing) {
@@ -2534,23 +2295,11 @@ canvas.addEventListener(
     stopDrawing
 );
 
-/*
-|--------------------------------------------------------------------------
-| Clear Signature
-|--------------------------------------------------------------------------
-*/
-
 document
     .getElementById('clearSignature')
     .addEventListener(
         'click',
         function () {
-
-            /*
-            |----------------------------------------------------------------------
-            | Temporarily remove canvas transform
-            |----------------------------------------------------------------------
-            */
 
             ctx.save();
 
@@ -2571,15 +2320,6 @@ document
             );
 
             ctx.restore();
-
-            /*
-            |----------------------------------------------------------------------
-            | Restore drawing configuration
-            |----------------------------------------------------------------------
-            */
-
-            const rect =
-                canvas.getBoundingClientRect();
 
             const ratio =
                 Math.max(
@@ -2616,12 +2356,6 @@ document
         }
     );
 
-/*
-|--------------------------------------------------------------------------
-| Upload Preview
-|--------------------------------------------------------------------------
-*/
-
 const signatureImage =
     document.getElementById(
         'signatureImage'
@@ -2655,12 +2389,6 @@ signatureImage.addEventListener(
             return;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Validate File Type
-        |--------------------------------------------------------------------------
-        */
-
         const allowedTypes = [
             'image/jpeg',
             'image/png'
@@ -2676,7 +2404,8 @@ signatureImage.addEventListener(
                 'Please select a JPG or PNG image.'
             );
 
-            this.value = '';
+            this.value =
+                '';
 
             signaturePreview.style.display =
                 'none';
@@ -2686,12 +2415,6 @@ signatureImage.addEventListener(
 
             return;
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Validate File Size
-        |--------------------------------------------------------------------------
-        */
 
         const maxSize =
             5 * 1024 * 1024;
@@ -2702,7 +2425,8 @@ signatureImage.addEventListener(
                 'Signature image must be 5 MB or smaller.'
             );
 
-            this.value = '';
+            this.value =
+                '';
 
             signaturePreview.style.display =
                 'none';
@@ -2712,12 +2436,6 @@ signatureImage.addEventListener(
 
             return;
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Preview
-        |--------------------------------------------------------------------------
-        */
 
         const reader =
             new FileReader();
@@ -2736,23 +2454,11 @@ signatureImage.addEventListener(
     }
 );
 
-/*
-|--------------------------------------------------------------------------
-| Form Submit
-|--------------------------------------------------------------------------
-*/
-
 document
     .getElementById('createUserForm')
     .addEventListener(
         'submit',
         function () {
-
-            /*
-            |--------------------------------------------------------------------------
-            | Convert Canvas To PNG Base64
-            |--------------------------------------------------------------------------
-            */
 
             if (
                 signatureMethod.value === 'draw' &&
@@ -2766,12 +2472,6 @@ document
             }
         }
     );
-
-/*
-|--------------------------------------------------------------------------
-| Mobile Sidebar
-|--------------------------------------------------------------------------
-*/
 
 const mobileMenuButton =
     document.getElementById(
@@ -2791,11 +2491,17 @@ const sidebarOverlay =
 function closeSidebar() {
 
     if (adminSidebar) {
-        adminSidebar.classList.remove('show');
+
+        adminSidebar.classList.remove(
+            'show'
+        );
     }
 
     if (sidebarOverlay) {
-        sidebarOverlay.classList.remove('show');
+
+        sidebarOverlay.classList.remove(
+            'show'
+        );
     }
 
     document.body.classList.remove(
@@ -2834,24 +2540,26 @@ if (sidebarOverlay) {
 
 document
     .querySelectorAll('.sidebar-link')
-    .forEach(function (link) {
+    .forEach(
+        function (link) {
 
-        link.addEventListener(
-            'click',
-            function () {
+            link.addEventListener(
+                'click',
+                function () {
 
-                if (
-                    window.innerWidth <= 991
-                ) {
-                    closeSidebar();
+                    if (
+                        window.innerWidth <= 991
+                    ) {
+
+                        closeSidebar();
+                    }
                 }
-            }
-        );
-    });
+            );
+        }
+    );
 
 </script>
 
 </body>
 
 </html>
-

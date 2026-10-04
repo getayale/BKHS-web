@@ -61,7 +61,6 @@ function getInitials(string $name): string
 */
 
 $registrarName = (string) ($_SESSION['full_name'] ?? 'Registrar');
-
 $initials = getInitials($registrarName);
 
 /*
@@ -98,12 +97,13 @@ $stmt->close();
 */
 
 $search = trim((string) ($_GET['search'] ?? ''));
-
 $grade = (int) ($_GET['grade'] ?? 0);
-
 $section = trim((string) ($_GET['section'] ?? ''));
 
-$page = max(1, (int) ($_GET['page'] ?? 1));
+$page = max(
+    1,
+    (int) ($_GET['page'] ?? 1)
+);
 
 $perPage = 10;
 
@@ -131,13 +131,20 @@ if ($academicYearName !== '') {
 
     $countSql = "
         SELECT COUNT(*) AS total
+
         FROM homeroom_teacher_assignments hta
 
         INNER JOIN users u
             ON u.id = hta.teacher_user_id
 
+        INNER JOIN teachers t
+            ON t.user_id = hta.teacher_user_id
+
         WHERE hta.academic_year = ?
           AND hta.is_active = 1
+
+          AND t.employment_status = 'Active'
+
           AND LOWER(u.role) = 'teacher'
           AND COALESCE(u.is_deleted, 0) = 0
     ";
@@ -147,6 +154,12 @@ if ($academicYearName !== '') {
     $countParams = [
         $academicYearName
     ];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
 
     if ($search !== '') {
 
@@ -167,6 +180,12 @@ if ($academicYearName !== '') {
         $countParams[] = $searchLike;
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | Grade
+    |--------------------------------------------------------------------------
+    */
+
     if ($grade > 0) {
 
         $countSql .= "
@@ -177,6 +196,12 @@ if ($academicYearName !== '') {
 
         $countParams[] = $grade;
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Section
+    |--------------------------------------------------------------------------
+    */
 
     if ($section !== '') {
 
@@ -240,16 +265,21 @@ if ($academicYearName !== '') {
             hta.grade,
             hta.section,
             u.full_name AS teacher_name,
-            u.email AS teacher_email,
-            u.phone AS teacher_phone
+            u.email AS teacher_email
 
         FROM homeroom_teacher_assignments hta
 
         INNER JOIN users u
             ON u.id = hta.teacher_user_id
 
+        INNER JOIN teachers t
+            ON t.user_id = hta.teacher_user_id
+
         WHERE hta.academic_year = ?
           AND hta.is_active = 1
+
+          AND t.employment_status = 'Active'
+
           AND LOWER(u.role) = 'teacher'
           AND COALESCE(u.is_deleted, 0) = 0
     ";
@@ -330,6 +360,7 @@ if ($academicYearName !== '') {
             hta.grade ASC,
             hta.section ASC,
             u.full_name ASC
+
         LIMIT ? OFFSET ?
     ";
 
@@ -392,6 +423,7 @@ function paginationUrl(
 ?>
 
 <!DOCTYPE html>
+
 <html lang="en">
 
 <head>
@@ -771,7 +803,7 @@ function paginationUrl(
 
         .table {
             margin: 0;
-            min-width: 700px;
+            min-width: 500px;
         }
 
         .table thead th {
@@ -809,28 +841,15 @@ function paginationUrl(
             margin-top: 3px;
         }
 
-        .grade-badge {
+        .class-badge {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            min-width: 34px;
-            padding: 6px 9px;
+            min-width: 48px;
+            padding: 6px 10px;
             border-radius: 7px;
             background: #eff6ff;
             color: #1d4ed8;
-            font-size: 11px;
-            font-weight: 700;
-        }
-
-        .section-badge {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 32px;
-            padding: 6px 9px;
-            border-radius: 7px;
-            background: #f3f4f6;
-            color: #374151;
             font-size: 11px;
             font-weight: 700;
         }
@@ -965,7 +984,6 @@ function paginationUrl(
             .stat-card {
                 padding: 16px;
             }
-
         }
 
     </style>
@@ -1352,9 +1370,7 @@ function paginationUrl(
                     <div class="stat-card">
 
                         <div class="stat-icon">
-
                             <i class="bi bi-person-workspace"></i>
-
                         </div>
 
                         <div class="stat-label">
@@ -1374,9 +1390,7 @@ function paginationUrl(
                     <div class="stat-card">
 
                         <div class="stat-icon">
-
                             <i class="bi bi-people-fill"></i>
-
                         </div>
 
                         <div class="stat-label">
@@ -1515,9 +1529,7 @@ function paginationUrl(
                                     style="min-width:43px;border-radius:8px;"
                                     title="Clear filters"
                                 >
-
                                     <i class="bi bi-arrow-counterclockwise"></i>
-
                                 </a>
 
                             </div>
@@ -1547,9 +1559,7 @@ function paginationUrl(
                         </h2>
 
                         <div class="table-subtitle">
-
                             Active assignments for the current academic year
-
                         </div>
 
                     </div>
@@ -1578,16 +1588,12 @@ function paginationUrl(
                         </div>
 
                         <div class="fw-semibold">
-
                             No homeroom teachers found
-
                         </div>
 
                         <div class="small mt-1">
-
                             There are no active homeroom teacher assignments
                             matching your filters.
-
                         </div>
 
                     </div>
@@ -1603,23 +1609,15 @@ function paginationUrl(
                                 <tr>
 
                                     <th>
-                                        #
+                                        No
                                     </th>
 
                                     <th>
-                                        Teacher
+                                        Teacher Name
                                     </th>
 
                                     <th>
-                                        Phone
-                                    </th>
-
-                                    <th>
-                                        Grade
-                                    </th>
-
-                                    <th>
-                                        Section
+                                        Class
                                     </th>
 
                                 </tr>
@@ -1633,56 +1631,27 @@ function paginationUrl(
                                     <tr>
 
                                         <td>
-
                                             <?= $offset + $index + 1 ?>
-
                                         </td>
 
                                         <td>
 
                                             <div class="teacher-name">
-
                                                 <?= e(
                                                     (string) $assignment['teacher_name']
                                                 ) ?>
-
-                                            </div>
-
-                                            <div class="teacher-email">
-
-                                                <?= e(
-                                                    (string) $assignment['teacher_email']
-                                                ) ?>
-
                                             </div>
 
                                         </td>
 
                                         <td>
 
-                                            <?= e(
-                                                (string) $assignment['teacher_phone']
-                                            ) ?>
+                                            <span class="class-badge">
 
-                                        </td>
-
-                                        <td>
-
-                                            <span class="grade-badge">
-
-                                                Grade
-                                                <?= (int) $assignment['grade'] ?>
-
-                                            </span>
-
-                                        </td>
-
-                                        <td>
-
-                                            <span class="section-badge">
-
-                                                <?= e(
-                                                    (string) $assignment['section']
+                                                <?= (int) $assignment['grade'] ?><?= e(
+                                                    strtoupper(
+                                                        (string) $assignment['section']
+                                                    )
                                                 ) ?>
 
                                             </span>
@@ -1719,17 +1688,23 @@ function paginationUrl(
                             ?>
 
                             Showing
+
                             <strong>
                                 <?= $startRecord ?>
                             </strong>
+
                             -
+
                             <strong>
                                 <?= $endRecord ?>
                             </strong>
+
                             of
+
                             <strong>
                                 <?= $totalRecords ?>
                             </strong>
+
                             teachers
 
                         </div>
@@ -1953,10 +1928,13 @@ function paginationUrl(
 function toggleSidebar() {
 
     const sidebar = document.getElementById('sidebar');
+
     const overlay = document.getElementById('sidebarOverlay');
 
     sidebar.classList.toggle('show');
+
     overlay.classList.toggle('show');
+
 }
 
 </script>

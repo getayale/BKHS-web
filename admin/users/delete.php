@@ -1,5 +1,6 @@
-
 <?php
+
+declare(strict_types=1);
 
 session_start();
 
@@ -13,7 +14,7 @@ if (
     !isset($_SESSION['logged_in']) ||
     $_SESSION['logged_in'] !== true ||
     !isset($_SESSION['role']) ||
-    strtolower($_SESSION['role']) !== 'admin'
+    strtolower((string) $_SESSION['role']) !== 'admin'
 ) {
     header('Location: ../../auth/login.php');
     exit;
@@ -26,6 +27,14 @@ if (
 */
 
 require_once '../../config/database.php';
+
+/*
+|--------------------------------------------------------------------------
+| Audit Logger
+|--------------------------------------------------------------------------
+*/
+
+require_once '../../includes/AuditLogger.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -67,7 +76,9 @@ if (
     isset($_SESSION['user_id']) &&
     (int) $_SESSION['user_id'] === (int) $id
 ) {
-    $_SESSION['error'] = 'You cannot delete your own account.';
+    $_SESSION['error'] =
+        'You cannot delete your own account.';
+
     header('Location: index.php');
     exit;
 }
@@ -79,22 +90,35 @@ if (
 */
 
 $stmt = $conn->prepare(
-    "SELECT id, full_name
+    "SELECT
+        id,
+        full_name,
+        email,
+        phone,
+        role,
+        signature_path
      FROM users
      WHERE id = ?
      LIMIT 1"
 );
 
-$stmt->bind_param('i', $id);
+$stmt->bind_param(
+    'i',
+    $id
+);
+
 $stmt->execute();
 
 $result = $stmt->get_result();
+
 $user = $result->fetch_assoc();
 
 $stmt->close();
 
 if (!$user) {
-    $_SESSION['error'] = 'User not found.';
+    $_SESSION['error'] =
+        'User not found.';
+
     header('Location: index.php');
     exit;
 }
@@ -110,29 +134,87 @@ $stmt = $conn->prepare(
      WHERE id = ?"
 );
 
-$stmt->bind_param('i', $id);
+$stmt->bind_param(
+    'i',
+    $id
+);
 
-if ($stmt->execute()) {
+try {
 
-    if ($stmt->affected_rows > 0) {
+    if ($stmt->execute()) {
 
-        $_SESSION['success'] =
-            'User "' . $user['full_name'] . '" deleted successfully.';
+        if ($stmt->affected_rows > 0) {
+
+            /*
+            |--------------------------------------------------------------------------
+            | Audit Log
+            |--------------------------------------------------------------------------
+            |
+            | Log the deleted user's information as old_values.
+            | Password/password hash is intentionally NOT included.
+            |
+            */
+
+            AuditLogger::log(
+                $conn,
+                'USER_DELETED',
+                'Deleted a user account',
+                'user',
+                (string) $id,
+                [
+                    'user_id' => (int) $user['id'],
+                    'full_name' => (string) ($user['full_name'] ?? ''),
+                    'email' => (string) ($user['email'] ?? ''),
+                    'phone' => (string) ($user['phone'] ?? ''),
+                    'role' => (string) ($user['role'] ?? ''),
+                    'signature_path' => !empty($user['signature_path'])
+                        ? (string) $user['signature_path']
+                        : null
+                ],
+                null
+            );
+
+            $_SESSION['success'] =
+                'User "' .
+                (string) $user['full_name'] .
+                '" deleted successfully.';
+
+        } else {
+
+            $_SESSION['error'] =
+                'The user could not be deleted.';
+        }
 
     } else {
 
         $_SESSION['error'] =
-            'The user could not be deleted.';
+            'Unable to delete the user. Please try again.';
     }
 
-} else {
+} catch (mysqli_sql_exception $e) {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Database Error
+    |--------------------------------------------------------------------------
+    */
 
     $_SESSION['error'] =
         'Unable to delete the user. Please try again.';
+
+    error_log(
+        'BKHS User Delete Error: ' .
+        $e->getMessage()
+    );
 }
 
 $stmt->close();
 
+/*
+|--------------------------------------------------------------------------
+| Redirect
+|--------------------------------------------------------------------------
+*/
+
 header('Location: index.php');
 exit;
-
